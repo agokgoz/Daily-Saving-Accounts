@@ -98,222 +98,109 @@ def parse_rate_float(text: str) -> float:
         return 0.0
 
 
-def get_ing_rates(page) -> dict[str, float]:
+def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
     """
-    Extract ING Turuncu Hesap interest rates using text-based locators.
+    Extract a rate value using JavaScript evaluation.
 
-    The ING page embeds rates in a table structure like:
-        <tr>
-          <td><div class="label">Hoş Geldin Faizi</div></td>
-          <td><div class="value">%53</div></td>
-        </tr>
-
-    This function anchors to table rows using filter(has_text=...) which
-    automatically ignores hidden mobile menus and waits for the table to render.
-
-    Returns:
-        {"welcome_rate": float, "standard_rate": float}
-    """
-    welcome_rate = 0.0
-    standard_rate = 0.0
-
-    try:
-        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
-        welcome_row = page.locator("tr").filter(has_text=re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first
-        welcome_row.wait_for(timeout=10000)
-        welcome_value = welcome_row.locator(".value").first
-        welcome_rate = parse_rate_float(welcome_value.inner_text())
-    except Exception as exc:
-        page.screenshot(path="error_ing_welcome.png", full_page=True)
-        print(f"  [WARN] Error extracting ING welcome rate: {exc}")
-
-    try:
-        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
-        standard_row = page.locator("tr").filter(has_text=re.compile(r"Standart", re.IGNORECASE)).first
-        standard_row.wait_for(timeout=10000)
-        standard_value = standard_row.locator(".value").first
-        standard_rate = parse_rate_float(standard_value.inner_text())
-    except Exception as exc:
-        page.screenshot(path="error_ing_standard.png", full_page=True)
-        print(f"  [WARN] Error extracting ING standard rate: {exc}")
-
-    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
-
-
-def get_akbank_rates(page) -> dict[str, float]:
-    """
-    Extract Akbank Serbest Hesap interest rates using text-based locators.
-
-    The Akbank page (built on SharePoint) embeds rates in a table or grid
-    structure. This function anchors to table rows using filter(has_text=...)
-    which automatically ignores hidden mobile menus and waits for rendering.
-
-    Returns:
-        {"welcome_rate": float, "standard_rate": float}
-    """
-    welcome_rate = 0.0
-    standard_rate = 0.0
-
-    try:
-        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
-        welcome_row = page.locator("tr").filter(has_text=re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first
-        welcome_row.wait_for(timeout=10000)
-        # Look for rate value in adjacent td or div elements
-        rate_element = welcome_row.locator("td").last
-        welcome_rate = parse_rate_float(rate_element.inner_text())
-    except Exception as exc:
-        page.screenshot(path="error_akbank_welcome.png", full_page=True)
-        print(f"  [WARN] Error extracting Akbank welcome rate: {exc}")
-
-    try:
-        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
-        standard_row = page.locator("tr").filter(has_text=re.compile(r"Standart", re.IGNORECASE)).first
-        standard_row.wait_for(timeout=10000)
-        # Look for rate value in adjacent td or div elements
-        rate_element = standard_row.locator("td").last
-        standard_rate = parse_rate_float(rate_element.inner_text())
-    except Exception as exc:
-        page.screenshot(path="error_akbank_standard.png", full_page=True)
-        print(f"  [WARN] Error extracting Akbank standard rate: {exc}")
-
-    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
-
-
-def get_qnb_rates(page) -> dict[str, float]:
-    """
-    Extract QNB Kazandıran Günlük Hesap interest rates using API interception.
-
-    The QNB page renders rates client-side via JavaScript using a slider UI.
-    Instead of scraping the DOM, this function intercepts the background XHR
-    request that fetches rate data and extracts values directly from the JSON.
-
-    Returns:
-        {"welcome_rate": float, "standard_rate": float}
-    """
-    welcome_rate = 0.0
-    standard_rate = 0.0
-    intercepted_data = []
-
-    def handle_response(response):
-        """Callback to capture all JSON responses for debugging."""
-        try:
-            # Collect ALL JSON responses to see what data is available
-            if "application/json" in response.headers.get("content-type", ""):
-                json_data = response.json()
-                print(f"  [DEBUG] Intercepted JSON from {response.url}:")
-                print(f"  [DEBUG] {json_data}")
-                intercepted_data.append({"url": response.url, "data": json_data})
-        except Exception:
-            pass
-
-    try:
-        # Register response handler FIRST
-        page.on("response", handle_response)
-
-        # Reload the page so we can intercept the API calls
-        # (The main loop already called page.goto, so listener was attached too late)
-        page.reload(wait_until="networkidle")
-
-        # Additional wait to catch any lazy-loaded requests
-        page.wait_for_timeout(5000)
-
-        # Process intercepted data - placeholders for JSON keys
-        # The exact structure will be determined after seeing the raw JSON output
-        for item in intercepted_data:
-            print(f"  [DEBUG] Processing intercepted data from {item['url']}: {item['data']}")
-            # TODO: Map the correct JSON keys after inspecting the output
-            # Example placeholders:
-            # welcome_rate = item['data'].get("tanismaFaizi", 0.0) or item['data'].get("welcomeRate", 0.0)
-            # standard_rate = item['data'].get("standartFaiz", 0.0) or item['data'].get("standardRate", 0.0)
-
-        if not intercepted_data:
-            print("  [WARN] No JSON data intercepted from QNB API")
-            page.screenshot(path="error_qnb_no_api.png", full_page=True)
-
-    except Exception as exc:
-        page.screenshot(path="error_qnb.png", full_page=True)
-        print(f"  [WARN] Error extracting QNB rates via API interception: {exc}")
-
-    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
-
-
-def _sanitize_filename(name: str) -> str:
-    """
-    Sanitize a string for use in a filename by removing or replacing 
-    potentially dangerous characters.
-    """
-    # Replace whitespace with underscores, remove path separators and other unsafe chars
-    safe_chars = re.sub(r'[^\w\-]', '_', name.lower())
-    return safe_chars
-
-
-def _extract_rate_from_table_row(page, label_pattern: re.Pattern, rate_name: str, bank_name: str) -> float:
-    """
-    Helper function to extract a rate value from a table row.
-
-    Anchors to table rows using filter(has_text=...) which automatically
-    ignores hidden mobile menus and waits for the table to render.
+    Injects JS to find the keyword, go to its parent container, and extract
+    the highest percentage value found (to avoid picking up term/day counts).
 
     Args:
         page: Playwright page object
-        label_pattern: Compiled regex pattern to search for
-        rate_name: Name of the rate for error logging
-        bank_name: Name of the bank for screenshot filename
+        keyword: Text keyword to search for (e.g., "Hoş Geldin", "Standart")
+        bank_name: Name of the bank for debug logging
 
     Returns:
         The extracted rate as a float, or 0.0 if extraction fails.
     """
     try:
-        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
-        row = page.locator("tr").filter(has_text=label_pattern).first
-        row.wait_for(timeout=10000)
-        # Get the sibling <td> element containing the percentage value
-        rate_cells = row.locator("td")
-        # Typically the rate is in the second or last <td> cell
-        if rate_cells.count() >= 2:
-            rate_element = rate_cells.nth(1)
-        else:
-            rate_element = rate_cells.last
-        return parse_rate_float(rate_element.inner_text())
+        # Injects JS to find the keyword, go to its parent container, and extract the percentage
+        js_code = f"""
+        () => {{
+            const elements = Array.from(document.querySelectorAll('*'));
+            // Find the deepest element containing the keyword
+            const target = elements.find(el => 
+                el.children.length === 0 && 
+                el.textContent.toLowerCase().includes('{keyword}'.toLowerCase())
+            );
+            if (!target) return "";
+            
+            // Look at its parent row or container
+            const container = target.closest('tr, .row, .flex, table') || target.parentElement.parentElement;
+            
+            // Find all percentage values in this container
+            const text = container.innerText || "";
+            const matches = text.match(/(?:%\\s?)?\\d+[.,]\\d+(?:\\s?%)?|(?:%\\s?)?\\d+(?:\\s?%)?/g);
+            
+            if (matches) {{
+                // Return the highest percentage found in that row to ensure we get the rate, not a term/day count
+                const numbers = matches.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
+                return Math.max(...numbers).toString();
+            }}
+            return "";
+        }}
+        """
+        rate_text = page.evaluate(js_code)
+        print(f"    [DEBUG] {bank_name} '{keyword}' raw JS extraction: '{rate_text}'")
+        return parse_rate_float(rate_text)
     except Exception as exc:
-        safe_bank = _sanitize_filename(bank_name)
-        safe_rate = _sanitize_filename(rate_name)
-        page.screenshot(path=f"error_{safe_bank}_{safe_rate}.png", full_page=True)
-        print(f"  [WARN] Error extracting TEB {rate_name}: {exc}")
-    return 0.0
+        print(f"  [WARN] JS extraction failed for {bank_name} ({keyword}): {exc}")
+        return 0.0
 
 
-def get_teb_rates(page) -> dict[str, float]:
+def get_ing_rates(page) -> dict[str, float]:
     """
-    Extract TEB Marifetli Hesap interest rates using HTML table parsing.
-
-    The TEB page (built on ASP.NET) renders rates in a static HTML table
-    structure. This function waits for the table to load, then uses text
-    locators to find rows containing "Hoş Geldin Faizi" and "Standart Faiz"
-    labels, extracting the rate values from adjacent <td> elements.
+    Extract ING Turuncu Hesap interest rates using JavaScript evaluation.
 
     Returns:
         {"welcome_rate": float, "standard_rate": float}
     """
-    welcome_rate = 0.0
-    standard_rate = 0.0
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "ING"),
+        "standard_rate": extract_rate_via_js(page, "Standart", "ING")
+    }
 
-    try:
-        # Wait for the main table to load
-        page.wait_for_selector('table', timeout=PAGE_TIMEOUT_MS)
 
-        # Extract rates using helper function with regex patterns
-        welcome_pattern = re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)
-        standard_pattern = re.compile(r"Standart", re.IGNORECASE)
-        
-        welcome_rate = _extract_rate_from_table_row(page, welcome_pattern, "welcome rate", "teb")
-        standard_rate = _extract_rate_from_table_row(page, standard_pattern, "standard rate", "teb")
+def get_akbank_rates(page) -> dict[str, float]:
+    """
+    Extract Akbank Serbest Hesap interest rates using JavaScript evaluation.
 
-    except Exception as exc:
-        page.screenshot(path="error_teb.png", full_page=True)
-        print(f"  [WARN] Error loading TEB page table: {exc}")
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Tanışma", "Akbank"),
+        "standard_rate": extract_rate_via_js(page, "Standart", "Akbank")
+    }
 
-    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
+
+def get_qnb_rates(page) -> dict[str, float]:
+    """
+    Extract QNB Kazandıran Günlük Hesap interest rates using JavaScript evaluation.
+
+    The QNB page renders rates client-side via JavaScript. This function uses
+    DOM-based JS evaluation to extract the rates directly from the rendered page.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "QNB"),
+        "standard_rate": extract_rate_via_js(page, "Standart", "QNB")
+    }
+
+
+def get_teb_rates(page) -> dict[str, float]:
+    """
+    Extract TEB Marifetli Hesap interest rates using JavaScript evaluation.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "TEB"),
+        "standard_rate": extract_rate_via_js(page, "Standart", "TEB")
+    }
 
 
 def scrape_all_banks() -> dict[str, dict[str, str]]:
