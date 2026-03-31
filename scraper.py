@@ -108,8 +108,8 @@ def get_ing_rates(page) -> dict[str, float]:
           <td><div class="value">%53</div></td>
         </tr>
 
-    This function finds the row by locating the text label, then navigates
-    to the parent <tr> and extracts the .value div within that row.
+    This function anchors to table rows using filter(has_text=...) which
+    automatically ignores hidden mobile menus and waits for the table to render.
 
     Returns:
         {"welcome_rate": float, "standard_rate": float}
@@ -118,8 +118,9 @@ def get_ing_rates(page) -> dict[str, float]:
     standard_rate = 0.0
 
     try:
-        # Find "Hoş Geldin Faizi" or "Tanışma Faizi" label using regex, filter for visible, navigate to parent <tr>, then find .value
-        welcome_row = page.get_by_text(re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).filter(has=page.locator(":visible")).first.locator("xpath=ancestor::tr")
+        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
+        welcome_row = page.locator("tr").filter(has_text=re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first
+        welcome_row.wait_for(timeout=10000)
         welcome_value = welcome_row.locator(".value").first
         welcome_rate = parse_rate_float(welcome_value.inner_text())
     except Exception as exc:
@@ -127,8 +128,9 @@ def get_ing_rates(page) -> dict[str, float]:
         print(f"  [WARN] Error extracting ING welcome rate: {exc}")
 
     try:
-        # Find "Standart Faiz" label using regex, filter for visible, navigate to parent <tr>, then find .value
-        standard_row = page.get_by_text(re.compile(r"Standart", re.IGNORECASE)).filter(has=page.locator(":visible")).first.locator("xpath=ancestor::tr")
+        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
+        standard_row = page.locator("tr").filter(has_text=re.compile(r"Standart", re.IGNORECASE)).first
+        standard_row.wait_for(timeout=10000)
         standard_value = standard_row.locator(".value").first
         standard_rate = parse_rate_float(standard_value.inner_text())
     except Exception as exc:
@@ -143,9 +145,8 @@ def get_akbank_rates(page) -> dict[str, float]:
     Extract Akbank Serbest Hesap interest rates using text-based locators.
 
     The Akbank page (built on SharePoint) embeds rates in a table or grid
-    structure. This function finds rows containing "Tanışma Faizi" (or
-    "Hoş Geldin Faizi") and "Standart Faiz" labels, then extracts the
-    adjacent rate values.
+    structure. This function anchors to table rows using filter(has_text=...)
+    which automatically ignores hidden mobile menus and waits for rendering.
 
     Returns:
         {"welcome_rate": float, "standard_rate": float}
@@ -154,29 +155,23 @@ def get_akbank_rates(page) -> dict[str, float]:
     standard_rate = 0.0
 
     try:
-        # Find "Tanışma Faizi" or "Hoş Geldin Faizi" using regex, filter for visible, navigate to parent <tr>
-        welcome_row = page.get_by_text(re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).filter(has=page.locator(":visible")).first.locator("xpath=ancestor::tr")
-
-        if welcome_row and welcome_row.count() > 0:
-            # Look for rate value in adjacent td or div elements
-            rate_element = welcome_row.locator("td").last
-            if rate_element.count() == 0:
-                rate_element = welcome_row.locator("div").last
-            welcome_rate = parse_rate_float(rate_element.inner_text())
+        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
+        welcome_row = page.locator("tr").filter(has_text=re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first
+        welcome_row.wait_for(timeout=10000)
+        # Look for rate value in adjacent td or div elements
+        rate_element = welcome_row.locator("td").last
+        welcome_rate = parse_rate_float(rate_element.inner_text())
     except Exception as exc:
         page.screenshot(path="error_akbank_welcome.png", full_page=True)
         print(f"  [WARN] Error extracting Akbank welcome rate: {exc}")
 
     try:
-        # Find "Standart Faiz" label using regex, filter for visible, navigate to parent <tr>, then find rate value
-        standard_row = page.get_by_text(re.compile(r"Standart", re.IGNORECASE)).filter(has=page.locator(":visible")).first.locator("xpath=ancestor::tr")
-
-        if standard_row and standard_row.count() > 0:
-            # Look for rate value in adjacent td or div elements
-            rate_element = standard_row.locator("td").last
-            if rate_element.count() == 0:
-                rate_element = standard_row.locator("div").last
-            standard_rate = parse_rate_float(rate_element.inner_text())
+        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
+        standard_row = page.locator("tr").filter(has_text=re.compile(r"Standart", re.IGNORECASE)).first
+        standard_row.wait_for(timeout=10000)
+        # Look for rate value in adjacent td or div elements
+        rate_element = standard_row.locator("td").last
+        standard_rate = parse_rate_float(rate_element.inner_text())
     except Exception as exc:
         page.screenshot(path="error_akbank_standard.png", full_page=True)
         print(f"  [WARN] Error extracting Akbank standard rate: {exc}")
@@ -200,40 +195,39 @@ def get_qnb_rates(page) -> dict[str, float]:
     intercepted_data = []
 
     def handle_response(response):
-        """Callback to capture JSON responses containing rate data."""
-        url = response.url.lower()
-        # Look for API endpoints that might contain rate data
-        if any(keyword in url for keyword in ['deposit', 'interest', 'rate', 'hesap', 'faiz', 'calculation']):
-            try:
-                if response.headers.get('content-type', '').startswith('application/json'):
-                    json_data = response.json()
-                    print(f"  [DEBUG] Intercepted JSON from {response.url}:")
-                    print(f"  [DEBUG] {json_data}")
-                    intercepted_data.append(json_data)
-            except Exception:
-                pass
+        """Callback to capture all JSON responses for debugging."""
+        try:
+            # Collect ALL JSON responses to see what data is available
+            if "application/json" in response.headers.get("content-type", ""):
+                json_data = response.json()
+                print(f"  [DEBUG] Intercepted JSON from {response.url}:")
+                print(f"  [DEBUG] {json_data}")
+                intercepted_data.append({"url": response.url, "data": json_data})
+        except Exception:
+            pass
 
     try:
-        # Register response handler before navigation
+        # Register response handler FIRST
         page.on("response", handle_response)
 
-        # Wait for network activity to complete
-        page.wait_for_load_state("networkidle", timeout=PAGE_TIMEOUT_MS)
+        # Reload the page so we can intercept the API calls
+        # (The main loop already called page.goto, so listener was attached too late)
+        page.reload(wait_until="networkidle")
 
         # Additional wait to catch any lazy-loaded requests
         page.wait_for_timeout(5000)
 
         # Process intercepted data - placeholders for JSON keys
         # The exact structure will be determined after seeing the raw JSON output
-        for data in intercepted_data:
-            print(f"  [DEBUG] Processing intercepted data: {data}")
+        for item in intercepted_data:
+            print(f"  [DEBUG] Processing intercepted data from {item['url']}: {item['data']}")
             # TODO: Map the correct JSON keys after inspecting the output
             # Example placeholders:
-            # welcome_rate = data.get("tanismaFaizi", 0.0) or data.get("welcomeRate", 0.0)
-            # standard_rate = data.get("standartFaiz", 0.0) or data.get("standardRate", 0.0)
+            # welcome_rate = item['data'].get("tanismaFaizi", 0.0) or item['data'].get("welcomeRate", 0.0)
+            # standard_rate = item['data'].get("standartFaiz", 0.0) or item['data'].get("standardRate", 0.0)
 
         if not intercepted_data:
-            print("  [WARN] No rate data intercepted from QNB API")
+            print("  [WARN] No JSON data intercepted from QNB API")
             page.screenshot(path="error_qnb_no_api.png", full_page=True)
 
     except Exception as exc:
@@ -257,8 +251,8 @@ def _extract_rate_from_table_row(page, label_pattern: re.Pattern, rate_name: str
     """
     Helper function to extract a rate value from a table row.
 
-    Finds the row containing text matching the regex pattern, then extracts
-    the rate value from the adjacent <td> element.
+    Anchors to table rows using filter(has_text=...) which automatically
+    ignores hidden mobile menus and waits for the table to render.
 
     Args:
         page: Playwright page object
@@ -270,17 +264,17 @@ def _extract_rate_from_table_row(page, label_pattern: re.Pattern, rate_name: str
         The extracted rate as a float, or 0.0 if extraction fails.
     """
     try:
-        # Filter for visible elements to avoid matching hidden mobile menus
-        row = page.get_by_text(label_pattern).filter(has=page.locator(":visible")).first.locator("xpath=ancestor::tr")
-        if row and row.count() > 0:
-            # Get the sibling <td> element containing the percentage value
-            rate_cells = row.locator("td")
-            # Typically the rate is in the second or last <td> cell
-            if rate_cells.count() >= 2:
-                rate_element = rate_cells.nth(1)
-            else:
-                rate_element = rate_cells.last
-            return parse_rate_float(rate_element.inner_text())
+        # Anchor to <tr> and filter by text - this ignores hidden mobile menus
+        row = page.locator("tr").filter(has_text=label_pattern).first
+        row.wait_for(timeout=10000)
+        # Get the sibling <td> element containing the percentage value
+        rate_cells = row.locator("td")
+        # Typically the rate is in the second or last <td> cell
+        if rate_cells.count() >= 2:
+            rate_element = rate_cells.nth(1)
+        else:
+            rate_element = rate_cells.last
+        return parse_rate_float(rate_element.inner_text())
     except Exception as exc:
         safe_bank = _sanitize_filename(bank_name)
         safe_rate = _sanitize_filename(rate_name)
