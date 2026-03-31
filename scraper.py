@@ -17,6 +17,7 @@ Usage:
 """
 
 import os
+import re
 import smtplib
 import traceback
 from datetime import date
@@ -52,55 +53,15 @@ BANK_CONFIG: dict[str, dict] = {
         # Akbank uses a custom scraper function that uses text locators.
         "custom_scraper": "akbank",
     },
-    "İş Bankası (Günlük Kazandıran Hesap)": {
-        "url": "https://www.isbank.com.tr/bireysel/mevduat-ve-yatirim/hesaplar/gunluk-kazandiran-hesap",
-        "welcome_sel": ".faiz-oranlari .hosgeldin-faiz",
-        "standard_sel": ".faiz-oranlari .standart-faiz",
-    },
-    "Fibabanka (Kiraz Hesap)": {
-        "url": "https://www.fibabanka.com.tr/bireysel/mevduat/kiraz-hesap",
-        "welcome_sel": ".kiraz-rate .welcome",
-        "standard_sel": ".kiraz-rate .standard",
-    },
-    "Odeabank (Oksijen Hesap)": {
-        "url": "https://www.odeabank.com.tr/bireysel/mevduat/oksijen-hesap",
-        "welcome_sel": ".oksijen-table .welcome-rate",
-        "standard_sel": ".oksijen-table .standard-rate",
-    },
-    "Burgan Bank (ON Hesap)": {
-        "url": "https://www.burgan.com.tr/bireysel/mevduat/on-hesap",
-        "welcome_sel": ".on-hesap-rate .welcome",
-        "standard_sel": ".on-hesap-rate .standard",
-    },
-    "Alternatif Bank (VOV Hesap)": {
-        "url": "https://www.alternatifbank.com.tr/bireysel/hesaplar/vov-hesap",
-        "welcome_sel": ".vov-rate-table .welcome-rate",
-        "standard_sel": ".vov-rate-table .standard-rate",
-    },
     "CEPTETEB (Marifetli Hesap)": {
         "url": "https://www.cepteteb.com.tr/marifetli-hesap",
         # TEB uses a custom scraper function that parses ASP.NET HTML tables.
         "custom_scraper": "teb",
     },
-    "VakıfBank (ARI Hesabı)": {
-        "url": "https://www.vakifbank.com.tr/ari-hesabi.aspx",
-        "welcome_sel": ".ari-hesap-rate .hosgeldin",
-        "standard_sel": ".ari-hesap-rate .standart",
-    },
-    "DenizBank (Kaptan Hesap)": {
-        "url": "https://www.denizbank.com/bireysel/hesaplar/kaptan-hesap",
-        "welcome_sel": ".kaptan-rate .welcome-rate",
-        "standard_sel": ".kaptan-rate .standard-rate",
-    },
     "QNB (Kazandıran Günlük Hesap)": {
         "url": "https://www.qnb.com.tr/kazandiran-gunluk-hesap",
         # QNB uses a custom scraper function that handles client-side rendering.
         "custom_scraper": "qnb",
-    },
-    "Enpara (Birikim Hesabı)": {
-        "url": "https://www.enpara.com/hesaplar/birikim-hesabi#faiz-oranlari",
-        "welcome_sel": "#faiz-oranlari .welcome-rate",
-        "standard_sel": "#faiz-oranlari .standard-rate",
     },
 }
 
@@ -160,19 +121,21 @@ def get_ing_rates(page) -> dict[str, float]:
     standard_rate = 0.0
 
     try:
-        # Find "Hoş Geldin Faizi" label, navigate to parent <tr>, then find .value
-        welcome_row = page.get_by_text("Hoş Geldin Faizi", exact=True).locator("xpath=ancestor::tr")
+        # Find "Hoş Geldin Faizi" or "Tanışma Faizi" label using regex, navigate to parent <tr>, then find .value
+        welcome_row = page.get_by_text(re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first.locator("xpath=ancestor::tr")
         welcome_value = welcome_row.locator(".value").first
         welcome_rate = parse_rate_float(welcome_value.inner_text())
     except Exception as exc:
+        page.screenshot(path="error_ing_welcome.png", full_page=True)
         print(f"  [WARN] Error extracting ING welcome rate: {exc}")
 
     try:
-        # Find "Standart Faiz" label, navigate to parent <tr>, then find .value
-        standard_row = page.get_by_text("Standart Faiz", exact=True).locator("xpath=ancestor::tr")
+        # Find "Standart Faiz" label using regex, navigate to parent <tr>, then find .value
+        standard_row = page.get_by_text(re.compile(r"Standart", re.IGNORECASE)).first.locator("xpath=ancestor::tr")
         standard_value = standard_row.locator(".value").first
         standard_rate = parse_rate_float(standard_value.inner_text())
     except Exception as exc:
+        page.screenshot(path="error_ing_standard.png", full_page=True)
         print(f"  [WARN] Error extracting ING standard rate: {exc}")
 
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
@@ -194,17 +157,8 @@ def get_akbank_rates(page) -> dict[str, float]:
     standard_rate = 0.0
 
     try:
-        # Try to find "Tanışma Faizi" first, fall back to "Hoş Geldin Faizi"
-        welcome_row = None
-        try:
-            welcome_row = page.get_by_text("Tanışma Faizi", exact=False).locator("xpath=ancestor::tr")
-        except Exception:
-            pass
-        if welcome_row is None or welcome_row.count() == 0:
-            try:
-                welcome_row = page.get_by_text("Hoş Geldin Faizi", exact=False).locator("xpath=ancestor::tr")
-            except Exception:
-                pass
+        # Find "Tanışma Faizi" or "Hoş Geldin Faizi" using regex, navigate to parent <tr>
+        welcome_row = page.get_by_text(re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)).first.locator("xpath=ancestor::tr")
 
         if welcome_row and welcome_row.count() > 0:
             # Look for rate value in adjacent td or div elements
@@ -213,11 +167,12 @@ def get_akbank_rates(page) -> dict[str, float]:
                 rate_element = welcome_row.locator("div").last
             welcome_rate = parse_rate_float(rate_element.inner_text())
     except Exception as exc:
+        page.screenshot(path="error_akbank_welcome.png", full_page=True)
         print(f"  [WARN] Error extracting Akbank welcome rate: {exc}")
 
     try:
-        # Find "Standart Faiz" label, navigate to parent <tr>, then find rate value
-        standard_row = page.get_by_text("Standart Faiz", exact=False).locator("xpath=ancestor::tr")
+        # Find "Standart Faiz" label using regex, navigate to parent <tr>, then find rate value
+        standard_row = page.get_by_text(re.compile(r"Standart", re.IGNORECASE)).first.locator("xpath=ancestor::tr")
 
         if standard_row and standard_row.count() > 0:
             # Look for rate value in adjacent td or div elements
@@ -226,6 +181,7 @@ def get_akbank_rates(page) -> dict[str, float]:
                 rate_element = standard_row.locator("div").last
             standard_rate = parse_rate_float(rate_element.inner_text())
     except Exception as exc:
+        page.screenshot(path="error_akbank_standard.png", full_page=True)
         print(f"  [WARN] Error extracting Akbank standard rate: {exc}")
 
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
@@ -257,10 +213,10 @@ def get_qnb_rates(page) -> dict[str, float]:
         standard_col_idx = None
 
         for idx, th in enumerate(headers):
-            header_text = th.inner_text().strip()
-            if "Tanışma" in header_text:
+            header_text = th.inner_text().strip().lower()
+            if "tanışma" in header_text or "hoş geldin" in header_text:
                 welcome_col_idx = idx
-            elif "Standart" in header_text:
+            elif "standart" in header_text:
                 standard_col_idx = idx
 
         # Get the first data row
@@ -279,28 +235,40 @@ def get_qnb_rates(page) -> dict[str, float]:
             standard_rate = parse_rate_float(standard_text)
 
     except Exception as exc:
+        page.screenshot(path="error_qnb.png", full_page=True)
         print(f"  [WARN] Error extracting QNB rates: {exc}")
 
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
 
 
-def _extract_rate_from_table_row(page, label_text: str, rate_name: str) -> float:
+def _sanitize_filename(name: str) -> str:
+    """
+    Sanitize a string for use in a filename by removing or replacing 
+    potentially dangerous characters.
+    """
+    # Replace whitespace with underscores, remove path separators and other unsafe chars
+    safe_chars = re.sub(r'[^\w\-]', '_', name.lower())
+    return safe_chars
+
+
+def _extract_rate_from_table_row(page, label_pattern: re.Pattern, rate_name: str, bank_name: str) -> float:
     """
     Helper function to extract a rate value from a table row.
 
-    Finds the row containing the specified label text, then extracts
+    Finds the row containing text matching the regex pattern, then extracts
     the rate value from the adjacent <td> element.
 
     Args:
         page: Playwright page object
-        label_text: Text label to search for (e.g., "Hoş Geldin Faizi")
+        label_pattern: Compiled regex pattern to search for
         rate_name: Name of the rate for error logging
+        bank_name: Name of the bank for screenshot filename
 
     Returns:
         The extracted rate as a float, or 0.0 if extraction fails.
     """
     try:
-        row = page.get_by_text(label_text, exact=False).locator("xpath=ancestor::tr")
+        row = page.get_by_text(label_pattern).first.locator("xpath=ancestor::tr")
         if row and row.count() > 0:
             # Get the sibling <td> element containing the percentage value
             rate_cells = row.locator("td")
@@ -311,6 +279,9 @@ def _extract_rate_from_table_row(page, label_text: str, rate_name: str) -> float
                 rate_element = rate_cells.last
             return parse_rate_float(rate_element.inner_text())
     except Exception as exc:
+        safe_bank = _sanitize_filename(bank_name)
+        safe_rate = _sanitize_filename(rate_name)
+        page.screenshot(path=f"error_{safe_bank}_{safe_rate}.png", full_page=True)
         print(f"  [WARN] Error extracting TEB {rate_name}: {exc}")
     return 0.0
 
@@ -334,35 +305,18 @@ def get_teb_rates(page) -> dict[str, float]:
         # Wait for the main table to load
         page.wait_for_selector('table', timeout=PAGE_TIMEOUT_MS)
 
-        # Extract rates using helper function
-        welcome_rate = _extract_rate_from_table_row(page, "Hoş Geldin Faizi", "welcome rate")
-        standard_rate = _extract_rate_from_table_row(page, "Standart Faiz", "standard rate")
+        # Extract rates using helper function with regex patterns
+        welcome_pattern = re.compile(r"Hoş Geldin|Tanışma", re.IGNORECASE)
+        standard_pattern = re.compile(r"Standart", re.IGNORECASE)
+        
+        welcome_rate = _extract_rate_from_table_row(page, welcome_pattern, "welcome rate", "teb")
+        standard_rate = _extract_rate_from_table_row(page, standard_pattern, "standard rate", "teb")
 
     except Exception as exc:
+        page.screenshot(path="error_teb.png", full_page=True)
         print(f"  [WARN] Error loading TEB page table: {exc}")
 
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
-
-
-# ---------------------------------------------------------------------------
-# Generic Scraping
-# ---------------------------------------------------------------------------
-
-def scrape_rate(page, selector: str, bank_name: str, rate_type: str) -> str:
-    """
-    Attempt to extract a text value from *selector* on the already-loaded
-    *page*.  Returns the stripped text or an empty string on failure.
-    """
-    try:
-        element = page.wait_for_selector(selector, timeout=PAGE_TIMEOUT_MS)
-        if element:
-            text = element.inner_text().strip()
-            return text
-    except PlaywrightTimeoutError:
-        print(f"  [WARN] Timeout waiting for {rate_type} selector on {bank_name}: {selector}")
-    except Exception as exc:
-        print(f"  [WARN] Error reading {rate_type} for {bank_name}: {exc}")
-    return ""
 
 
 def scrape_all_banks() -> dict[str, dict[str, str]]:
@@ -384,7 +338,8 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
     results: dict[str, dict[str, str]] = {}
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        # Visible browser for debugging (headless=False)
+        browser = pw.chromium.launch(headless=False)
         context = browser.new_context(
             # Mimic a regular desktop browser to avoid bot-detection.
             user_agent=(
@@ -402,20 +357,17 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
             standard_rate = ""
             try:
                 page.goto(config["url"], wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
+                
+                # Wait for observation (to see Cloudflare checks, cookie banners, etc.)
+                page.wait_for_timeout(3000)
 
-                # Check if this bank uses a custom scraper function
-                custom_scraper_id = config.get("custom_scraper")
-                if custom_scraper_id and custom_scraper_id in CUSTOM_SCRAPERS:
-                    # Use the custom scraper function
-                    custom_fn = CUSTOM_SCRAPERS[custom_scraper_id]
-                    rates = custom_fn(page)
-                    # Convert float rates to strings for storage consistency
-                    welcome_rate = str(rates.get("welcome_rate", 0.0))
-                    standard_rate = str(rates.get("standard_rate", 0.0))
-                else:
-                    # Use the generic CSS selector-based scraping
-                    welcome_rate = scrape_rate(page, config["welcome_sel"], bank_name, "Welcome Rate")
-                    standard_rate = scrape_rate(page, config["standard_sel"], bank_name, "Standard Rate")
+                # Execute the custom scraper function
+                custom_scraper_id = config["custom_scraper"]
+                custom_fn = CUSTOM_SCRAPERS[custom_scraper_id]
+                rates = custom_fn(page)
+                # Convert float rates to strings for storage consistency
+                welcome_rate = str(rates.get("welcome_rate", 0.0))
+                standard_rate = str(rates.get("standard_rate", 0.0))
 
                 print(f"  Welcome Rate : {welcome_rate or '(not found)'}")
                 print(f"  Standard Rate: {standard_rate or '(not found)'}")
