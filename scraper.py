@@ -49,8 +49,8 @@ BANK_CONFIG: dict[str, dict] = {
     },
     "Akbank (Serbest Hesap)": {
         "url": "https://www.akbank.com/tr-tr/sayfalar/serbest-hesap.aspx",
-        "welcome_sel": ".rate-card .welcome-rate",
-        "standard_sel": ".rate-card .standard-rate",
+        # Akbank uses a custom scraper function that uses text locators.
+        "custom_scraper": "akbank",
     },
     "İş Bankası (Günlük Kazandıran Hesap)": {
         "url": "https://www.isbank.com.tr/bireysel/mevduat-ve-yatirim/hesaplar/gunluk-kazandiran-hesap",
@@ -178,6 +178,59 @@ def get_ing_rates(page) -> dict[str, float]:
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
 
 
+def get_akbank_rates(page) -> dict[str, float]:
+    """
+    Extract Akbank Serbest Hesap interest rates using text-based locators.
+
+    The Akbank page (built on SharePoint) embeds rates in a table or grid
+    structure. This function finds rows containing "Tanışma Faizi" (or
+    "Hoş Geldin Faizi") and "Standart Faiz" labels, then extracts the
+    adjacent rate values.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    welcome_rate = 0.0
+    standard_rate = 0.0
+
+    try:
+        # Try to find "Tanışma Faizi" first, fall back to "Hoş Geldin Faizi"
+        welcome_row = None
+        try:
+            welcome_row = page.get_by_text("Tanışma Faizi", exact=False).locator("xpath=ancestor::tr")
+        except Exception:
+            pass
+        if welcome_row is None or welcome_row.count() == 0:
+            try:
+                welcome_row = page.get_by_text("Hoş Geldin Faizi", exact=False).locator("xpath=ancestor::tr")
+            except Exception:
+                pass
+
+        if welcome_row and welcome_row.count() > 0:
+            # Look for rate value in adjacent td or div elements
+            rate_element = welcome_row.locator("td").last
+            if rate_element.count() == 0:
+                rate_element = welcome_row.locator("div").last
+            welcome_rate = parse_rate_float(rate_element.inner_text())
+    except Exception as exc:
+        print(f"  [WARN] Error extracting Akbank welcome rate: {exc}")
+
+    try:
+        # Find "Standart Faiz" label, navigate to parent <tr>, then find rate value
+        standard_row = page.get_by_text("Standart Faiz", exact=False).locator("xpath=ancestor::tr")
+
+        if standard_row and standard_row.count() > 0:
+            # Look for rate value in adjacent td or div elements
+            rate_element = standard_row.locator("td").last
+            if rate_element.count() == 0:
+                rate_element = standard_row.locator("div").last
+            standard_rate = parse_rate_float(rate_element.inner_text())
+    except Exception as exc:
+        print(f"  [WARN] Error extracting Akbank standard rate: {exc}")
+
+    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
+
+
 def get_qnb_rates(page) -> dict[str, float]:
     """
     Extract QNB Kazandıran Günlük Hesap interest rates.
@@ -263,6 +316,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
     # Map of custom scraper identifiers to functions
     CUSTOM_SCRAPERS = {
         "ing": get_ing_rates,
+        "akbank": get_akbank_rates,
         "qnb": get_qnb_rates,
     }
 
