@@ -118,19 +118,19 @@ def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
         js_code = f"""
         () => {{
             const elements = Array.from(document.querySelectorAll('*'));
-            // Find the deepest element containing the keyword
-            const target = elements.find(el => 
-                el.children.length === 0 && 
-                el.textContent.toLowerCase().includes('{keyword}'.toLowerCase())
-            );
+            // Find element containing the keyword - check innerText to handle wrapped text in nested tags
+            const target = elements.find(el => {{
+                const text = el.innerText || el.textContent || "";
+                return text.toLowerCase().includes('{keyword}'.toLowerCase());
+            }});
             if (!target) return "";
             
             // Look at its parent row or container
-            const container = target.closest('tr, .row, .flex, table') || target.parentElement.parentElement;
+            const container = target.closest('tr, .row, .flex, table') || target.parentElement?.parentElement || target;
             
-            // Find all percentage values in this container
+            // Find all percentage values in this container - MUST have '%' sign to avoid matching plain numbers
             const text = container.innerText || "";
-            const matches = text.match(/(?:%\\s?)?\\d+[.,]\\d+(?:\\s?%)?|(?:%\\s?)?\\d+(?:\\s?%)?/g);
+            const matches = text.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
             
             if (matches) {{
                 // Return the highest percentage found in that row to ensure we get the rate, not a term/day count
