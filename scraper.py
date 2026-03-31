@@ -358,6 +358,26 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
                 # Wait for observation (to see Cloudflare checks, cookie banners, etc.)
                 page.wait_for_timeout(3000)
 
+                # Attempt to dismiss cookie banners
+                try:
+                    # Using a CSS selector list for common Turkish accept buttons
+                    cookie_btn = page.locator(
+                        "button:has-text('Kabul Et'), "
+                        "button:has-text('Tümünü Kabul Et'), "
+                        "button:has-text('Anladım'), "
+                        "button:has-text('Tercihlerimi Kaydet'), "
+                        "a:has-text('Anladım')"
+                    ).first
+                    
+                    # Try to click it if it appears within 2 seconds
+                    cookie_btn.click(timeout=2000)
+                    # Wait a moment for the banner animation to slide away
+                    page.wait_for_timeout(1000)
+                    print("  [DEBUG] Cookie banner dismissed.")
+                except Exception:
+                    # If no banner is found or it times out, safely ignore and continue
+                    pass
+
                 # Execute the custom scraper function
                 custom_scraper_id = config["custom_scraper"]
                 custom_fn = CUSTOM_SCRAPERS[custom_scraper_id]
