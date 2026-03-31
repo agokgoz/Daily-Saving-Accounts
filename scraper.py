@@ -94,8 +94,8 @@ BANK_CONFIG: dict[str, dict] = {
     },
     "QNB (Kazandıran Günlük Hesap)": {
         "url": "https://www.qnb.com.tr/kazandiran-gunluk-hesap",
-        "welcome_sel": ".rate-section .welcome-rate",
-        "standard_sel": ".rate-section .standard-rate",
+        # QNB uses a custom scraper function that handles client-side rendering.
+        "custom_scraper": "qnb",
     },
     "Enpara (Birikim Hesabı)": {
         "url": "https://www.enpara.com/hesaplar/birikim-hesabi#faiz-oranlari",
@@ -178,6 +178,59 @@ def get_ing_rates(page) -> dict[str, float]:
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
 
 
+def get_qnb_rates(page) -> dict[str, float]:
+    """
+    Extract QNB Kazandıran Günlük Hesap interest rates.
+
+    The QNB page renders rates client-side via JavaScript. After the table
+    appears, this function dynamically locates the column indexes for
+    "Tanışma Faizi" (welcome rate) and "Standart Faiz Oranı" (standard rate)
+    by inspecting the table headers, then extracts values from the first
+    data row.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    welcome_rate = 0.0
+    standard_rate = 0.0
+
+    try:
+        # Wait for the JS-rendered table to appear
+        page.wait_for_selector('.table.default.nowrap', timeout=PAGE_TIMEOUT_MS)
+
+        # Get all table headers to determine column indexes dynamically
+        headers = page.query_selector_all('.table.default.nowrap thead th')
+        welcome_col_idx = None
+        standard_col_idx = None
+
+        for idx, th in enumerate(headers):
+            header_text = th.inner_text().strip()
+            if "Tanışma" in header_text:
+                welcome_col_idx = idx
+            elif "Standart" in header_text:
+                standard_col_idx = idx
+
+        # Get the first data row
+        first_row_cells = page.query_selector_all(
+            '.table.default.nowrap tbody tr:nth-child(1) td'
+        )
+
+        # Extract welcome rate if column was found
+        if welcome_col_idx is not None and welcome_col_idx < len(first_row_cells):
+            welcome_text = first_row_cells[welcome_col_idx].inner_text()
+            welcome_rate = parse_rate_float(welcome_text)
+
+        # Extract standard rate if column was found
+        if standard_col_idx is not None and standard_col_idx < len(first_row_cells):
+            standard_text = first_row_cells[standard_col_idx].inner_text()
+            standard_rate = parse_rate_float(standard_text)
+
+    except Exception as exc:
+        print(f"  [WARN] Error extracting QNB rates: {exc}")
+
+    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
+
+
 # ---------------------------------------------------------------------------
 # Generic Scraping
 # ---------------------------------------------------------------------------
@@ -210,6 +263,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
     # Map of custom scraper identifiers to functions
     CUSTOM_SCRAPERS = {
         "ing": get_ing_rates,
+        "qnb": get_qnb_rates,
     }
 
     results: dict[str, dict[str, str]] = {}
