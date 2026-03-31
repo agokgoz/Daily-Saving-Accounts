@@ -44,10 +44,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 BANK_CONFIG: dict[str, dict] = {
     "ING (Turuncu Hesap)": {
         "url": "https://www.ingbank.com.tr/bireysel/mevduat/turuncu-hesap",
-        # ING renders rates inside a table; the first percentage is the
-        # welcome/introductory rate and the second is the standard rate.
-        "welcome_sel": ".ing-rate-table tbody tr:nth-child(1) td:nth-child(2)",
-        "standard_sel": ".ing-rate-table tbody tr:nth-child(2) td:nth-child(2)",
+        # ING uses a custom scraper function that uses text locators.
+        "custom_scraper": "ing",
     },
     "Akbank (Serbest Hesap)": {
         "url": "https://www.akbank.com/tr-tr/sayfalar/serbest-hesap.aspx",
@@ -114,7 +112,74 @@ PAGE_TIMEOUT_MS = 30_000
 
 
 # ---------------------------------------------------------------------------
-# Scraping
+# Bank-Specific Scraping Functions
+# ---------------------------------------------------------------------------
+# Some banks require specialized scraping logic that uses text locators
+# instead of brittle CSS selectors. These custom functions navigate the DOM
+# using visible text labels to find rate values more reliably.
+# ---------------------------------------------------------------------------
+
+def clean_rate_text(text: str) -> str:
+    """
+    Clean a rate string by removing the '%' sign, trimming whitespace,
+    and replacing Turkish decimal commas with dots.
+    Returns the cleaned string (e.g., '53' or '23.5').
+    """
+    cleaned = text.strip().replace("%", "").replace(",", ".").strip()
+    return cleaned
+
+
+def parse_rate_float(text: str) -> float:
+    """
+    Parse a cleaned rate string into a float.
+    Returns 0.0 if parsing fails.
+    """
+    try:
+        return float(clean_rate_text(text))
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def get_ing_rates(page) -> dict[str, float]:
+    """
+    Extract ING Turuncu Hesap interest rates using text-based locators.
+
+    The ING page embeds rates in a table structure like:
+        <tr>
+          <td><div class="label">Hoş Geldin Faizi</div></td>
+          <td><div class="value">%53</div></td>
+        </tr>
+
+    This function finds the row by locating the text label, then navigates
+    to the parent <tr> and extracts the .value div within that row.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    welcome_rate = 0.0
+    standard_rate = 0.0
+
+    try:
+        # Find "Hoş Geldin Faizi" label, navigate to parent <tr>, then find .value
+        welcome_row = page.get_by_text("Hoş Geldin Faizi", exact=True).locator("xpath=ancestor::tr")
+        welcome_value = welcome_row.locator(".value").first
+        welcome_rate = parse_rate_float(welcome_value.inner_text())
+    except Exception as exc:
+        print(f"  [WARN] Error extracting ING welcome rate: {exc}")
+
+    try:
+        # Find "Standart Faiz" label, navigate to parent <tr>, then find .value
+        standard_row = page.get_by_text("Standart Faiz", exact=True).locator("xpath=ancestor::tr")
+        standard_value = standard_row.locator(".value").first
+        standard_rate = parse_rate_float(standard_value.inner_text())
+    except Exception as exc:
+        print(f"  [WARN] Error extracting ING standard rate: {exc}")
+
+    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
+
+
+# ---------------------------------------------------------------------------
+# Generic Scraping
 # ---------------------------------------------------------------------------
 
 def scrape_rate(page, selector: str, bank_name: str, rate_type: str) -> str:
@@ -142,6 +207,11 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
     Returns a nested dict:
       { bank_name: { "welcome_rate": "...", "standard_rate": "..." } }
     """
+    # Map of custom scraper identifiers to functions
+    CUSTOM_SCRAPERS = {
+        "ing": get_ing_rates,
+    }
+
     results: dict[str, dict[str, str]] = {}
 
     with sync_playwright() as pw:
@@ -163,8 +233,21 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
             standard_rate = ""
             try:
                 page.goto(config["url"], wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
-                welcome_rate = scrape_rate(page, config["welcome_sel"], bank_name, "Welcome Rate")
-                standard_rate = scrape_rate(page, config["standard_sel"], bank_name, "Standard Rate")
+
+                # Check if this bank uses a custom scraper function
+                custom_scraper_id = config.get("custom_scraper")
+                if custom_scraper_id and custom_scraper_id in CUSTOM_SCRAPERS:
+                    # Use the custom scraper function
+                    custom_fn = CUSTOM_SCRAPERS[custom_scraper_id]
+                    rates = custom_fn(page)
+                    # Convert float rates to strings for storage consistency
+                    welcome_rate = str(rates.get("welcome_rate", 0.0))
+                    standard_rate = str(rates.get("standard_rate", 0.0))
+                else:
+                    # Use the generic CSS selector-based scraping
+                    welcome_rate = scrape_rate(page, config["welcome_sel"], bank_name, "Welcome Rate")
+                    standard_rate = scrape_rate(page, config["standard_sel"], bank_name, "Standard Rate")
+
                 print(f"  Welcome Rate : {welcome_rate or '(not found)'}")
                 print(f"  Standard Rate: {standard_rate or '(not found)'}")
             except Exception as exc:
