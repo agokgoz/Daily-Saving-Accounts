@@ -79,8 +79,8 @@ BANK_CONFIG: dict[str, dict] = {
     },
     "CEPTETEB (Marifetli Hesap)": {
         "url": "https://www.cepteteb.com.tr/marifetli-hesap",
-        "welcome_sel": ".marifetli-rate .welcome",
-        "standard_sel": ".marifetli-rate .standard",
+        # TEB uses a custom scraper function that parses ASP.NET HTML tables.
+        "custom_scraper": "teb",
     },
     "VakıfBank (ARI Hesabı)": {
         "url": "https://www.vakifbank.com.tr/ari-hesabi.aspx",
@@ -284,6 +284,66 @@ def get_qnb_rates(page) -> dict[str, float]:
     return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
 
 
+def _extract_rate_from_table_row(page, label_text: str, rate_name: str) -> float:
+    """
+    Helper function to extract a rate value from a table row.
+
+    Finds the row containing the specified label text, then extracts
+    the rate value from the adjacent <td> element.
+
+    Args:
+        page: Playwright page object
+        label_text: Text label to search for (e.g., "Hoş Geldin Faizi")
+        rate_name: Name of the rate for error logging
+
+    Returns:
+        The extracted rate as a float, or 0.0 if extraction fails.
+    """
+    try:
+        row = page.get_by_text(label_text, exact=False).locator("xpath=ancestor::tr")
+        if row and row.count() > 0:
+            # Get the sibling <td> element containing the percentage value
+            rate_cells = row.locator("td")
+            # Typically the rate is in the second or last <td> cell
+            if rate_cells.count() >= 2:
+                rate_element = rate_cells.nth(1)
+            else:
+                rate_element = rate_cells.last
+            return parse_rate_float(rate_element.inner_text())
+    except Exception as exc:
+        print(f"  [WARN] Error extracting TEB {rate_name}: {exc}")
+    return 0.0
+
+
+def get_teb_rates(page) -> dict[str, float]:
+    """
+    Extract TEB Marifetli Hesap interest rates using HTML table parsing.
+
+    The TEB page (built on ASP.NET) renders rates in a static HTML table
+    structure. This function waits for the table to load, then uses text
+    locators to find rows containing "Hoş Geldin Faizi" and "Standart Faiz"
+    labels, extracting the rate values from adjacent <td> elements.
+
+    Returns:
+        {"welcome_rate": float, "standard_rate": float}
+    """
+    welcome_rate = 0.0
+    standard_rate = 0.0
+
+    try:
+        # Wait for the main table to load
+        page.wait_for_selector('table', timeout=PAGE_TIMEOUT_MS)
+
+        # Extract rates using helper function
+        welcome_rate = _extract_rate_from_table_row(page, "Hoş Geldin Faizi", "welcome rate")
+        standard_rate = _extract_rate_from_table_row(page, "Standart Faiz", "standard rate")
+
+    except Exception as exc:
+        print(f"  [WARN] Error loading TEB page table: {exc}")
+
+    return {"welcome_rate": welcome_rate, "standard_rate": standard_rate}
+
+
 # ---------------------------------------------------------------------------
 # Generic Scraping
 # ---------------------------------------------------------------------------
@@ -318,6 +378,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
         "ing": get_ing_rates,
         "akbank": get_akbank_rates,
         "qnb": get_qnb_rates,
+        "teb": get_teb_rates,
     }
 
     results: dict[str, dict[str, str]] = {}
