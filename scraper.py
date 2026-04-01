@@ -58,6 +58,14 @@ BANK_CONFIG: dict[str, dict] = {
         "url": "https://www.qnb.com.tr/kazandiran-gunluk-hesap",
         "custom_scraper": "qnb",
     },
+    "Enpara (Birikim Hesabı)": {
+        "url": "https://www.enpara.com/hesaplar/birikim-hesabi#faiz-oranlari",
+        "custom_scraper": "enpara",
+    },
+    "VakıfBank (ARI Hesabı)": {
+        "url": "https://www.vakifbank.com.tr/tr/bireysel/hesaplar/vadeli-hesaplar/ari-hesabi",
+        "custom_scraper": "vakifbank",
+    },
 }
 
 # Path of the Excel file that stores historical rates.
@@ -208,6 +216,18 @@ def get_teb_rates(page) -> dict[str, float]:
     }
 
 
+def get_enpara_rates(page) -> dict[str, float]:
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Birikim Hesabı", "Enpara"),
+    }
+
+
+def get_vakifbank_rates(page) -> dict[str, float]:
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Tanışma", "VakıfBank"),
+    }
+
+
 def scrape_all_banks() -> dict[str, dict[str, str]]:
     """
     Visit every bank URL with a single Playwright browser session and collect
@@ -222,6 +242,8 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
         "akbank": get_akbank_rates,
         "qnb": get_qnb_rates,
         "teb": get_teb_rates,
+        "enpara": get_enpara_rates,
+        "vakifbank": get_vakifbank_rates,
     }
 
     results: dict[str, dict[str, str]] = {}
