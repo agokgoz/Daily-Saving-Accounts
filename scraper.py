@@ -101,41 +101,55 @@ def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
     """
     Extract a rate value using JavaScript evaluation.
 
-    Injects JS to find the keyword, go to its parent container, and extract
-    the highest percentage value found (to avoid picking up term/day counts).
+    Injects JS to find the keyword in visible elements, checks deepest nodes
+    first, and climbs up parent containers to find the percentage value.
 
     Args:
         page: Playwright page object
-        keyword: Text keyword to search for (e.g., "Hoş Geldin", "Standart")
+        keyword: Text keyword to search for (e.g., "Hoş Geldin", "Serbest Plus")
         bank_name: Name of the bank for debug logging
 
     Returns:
         The extracted rate as a float, or 0.0 if extraction fails.
     """
     try:
-        # Injects JS to find the keyword, go to its parent container, and extract the percentage
+        page.wait_for_timeout(2000)  # Give client-side frameworks a moment
         js_code = f"""
         () => {{
             const elements = Array.from(document.querySelectorAll('*'));
-            // Find element containing the keyword - check innerText to handle wrapped text in nested tags
-            const target = elements.find(el => {{
+            
+            // Find ALL elements containing the keyword that are actually VISIBLE
+            const visibleTargets = elements.filter(el => {{
+                const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
                 const text = el.innerText || el.textContent || "";
-                return text.toLowerCase().includes('{keyword}'.toLowerCase());
+                return isVisible && text.toLowerCase().includes('{keyword}'.toLowerCase());
             }});
-            if (!target) return "";
             
-            // Look at its parent row or container
-            const container = target.closest('tr, .row, .flex, table') || target.parentElement?.parentElement || target;
+            if (visibleTargets.length === 0) return "";
             
-            // Find all percentage values in this container - MUST have '%' sign to avoid matching plain numbers
-            const text = container.innerText || "";
-            const matches = text.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
-            
-            if (matches) {{
-                // Return the highest percentage found in that row to ensure we get the rate, not a term/day count
-                const numbers = matches.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
-                return Math.max(...numbers).toString();
+            // Reverse the array to start with the deepest child elements first
+            for (let target of visibleTargets.reverse()) {{
+                let current = target;
+                let matches = null;
+                
+                // Check the target itself and climb up to 6 parent levels
+                for (let i = 0; i < 7; i++) {{
+                    if (!current || current.tagName === 'BODY') break;
+                    
+                    const text = current.innerText || current.textContent || "";
+                    matches = text.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
+                    
+                    if (matches) break;
+                    current = current.parentElement;
+                }}
+                
+                // If we found a percentage near this specific visible keyword, return it
+                if (matches) {{
+                    const numbers = matches.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
+                    return Math.max(...numbers).toString();
+                }}
             }}
+            
             return "";
         }}
         """
@@ -167,7 +181,7 @@ def get_akbank_rates(page) -> dict[str, float]:
         {"welcome_rate": float}
     """
     return {
-        "welcome_rate": extract_rate_via_js(page, "Tanışma", "Akbank"),
+        "welcome_rate": extract_rate_via_js(page, "Serbest Plus Hesap ile", "Akbank"),
     }
 
 
@@ -181,8 +195,15 @@ def get_qnb_rates(page) -> dict[str, float]:
     Returns:
         {"welcome_rate": float}
     """
+    try:
+        # Force Playwright to wait for the dynamic content container
+        page.wait_for_selector('.table-wrap, .template-InterestRates, li:has-text("tanışma faizi")', timeout=10000)
+        page.wait_for_timeout(2000)
+    except Exception:
+        pass  # Proceed anyway if timeout occurs
+
     return {
-        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "QNB"),
+        "welcome_rate": extract_rate_via_js(page, "Tanışma", "QNB"),
     }
 
 
