@@ -1,11 +1,10 @@
 """
 Daily Savings Account Interest Rate Scraper
 ============================================
-Scrapes daily interest rates (Welcome Rate and Standard Rate) for Turkish
-"günlük kazandıran hesaplar" (daily savings accounts) from 12 bank websites,
-compares them with yesterday's rates stored in an Excel file, sends an HTML
-email notification if any rate changes are detected, and appends today's
-rates to the Excel file.
+Scrapes daily Welcome Rates for Turkish "günlük kazandıran hesaplar"
+(daily savings accounts) from bank websites, compares them with yesterday's
+rates stored in an Excel file, sends an HTML email notification if any rate
+changes are detected, and appends today's rates to the Excel file.
 
 Environment Variables Required (for email):
   SMTP_EMAIL    – sender Gmail address
@@ -150,66 +149,62 @@ def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
 
 def get_ing_rates(page) -> dict[str, float]:
     """
-    Extract ING Turuncu Hesap interest rates using JavaScript evaluation.
+    Extract ING Turuncu Hesap welcome rate using JavaScript evaluation.
 
     Returns:
-        {"welcome_rate": float, "standard_rate": float}
+        {"welcome_rate": float}
     """
     return {
         "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "ING"),
-        "standard_rate": extract_rate_via_js(page, "Standart", "ING")
     }
 
 
 def get_akbank_rates(page) -> dict[str, float]:
     """
-    Extract Akbank Serbest Hesap interest rates using JavaScript evaluation.
+    Extract Akbank Serbest Hesap welcome rate using JavaScript evaluation.
 
     Returns:
-        {"welcome_rate": float, "standard_rate": float}
+        {"welcome_rate": float}
     """
     return {
         "welcome_rate": extract_rate_via_js(page, "Tanışma", "Akbank"),
-        "standard_rate": extract_rate_via_js(page, "Standart", "Akbank")
     }
 
 
 def get_qnb_rates(page) -> dict[str, float]:
     """
-    Extract QNB Kazandıran Günlük Hesap interest rates using JavaScript evaluation.
+    Extract QNB Kazandıran Günlük Hesap welcome rate using JavaScript evaluation.
 
     The QNB page renders rates client-side via JavaScript. This function uses
     DOM-based JS evaluation to extract the rates directly from the rendered page.
 
     Returns:
-        {"welcome_rate": float, "standard_rate": float}
+        {"welcome_rate": float}
     """
     return {
         "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "QNB"),
-        "standard_rate": extract_rate_via_js(page, "Standart", "QNB")
     }
 
 
 def get_teb_rates(page) -> dict[str, float]:
     """
-    Extract TEB Marifetli Hesap interest rates using JavaScript evaluation.
+    Extract TEB Marifetli Hesap welcome rate using JavaScript evaluation.
 
     Returns:
-        {"welcome_rate": float, "standard_rate": float}
+        {"welcome_rate": float}
     """
     return {
         "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "TEB"),
-        "standard_rate": extract_rate_via_js(page, "Standart", "TEB")
     }
 
 
 def scrape_all_banks() -> dict[str, dict[str, str]]:
     """
     Visit every bank URL with a single Playwright browser session and collect
-    the Welcome Rate and Standard Rate for each bank.
+    the Welcome Rate for each bank.
 
     Returns a nested dict:
-      { bank_name: { "welcome_rate": "...", "standard_rate": "..." } }
+      { bank_name: { "welcome_rate": "..." } }
     """
     # Map of custom scraper identifiers to functions
     CUSTOM_SCRAPERS = {
@@ -238,7 +233,6 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
         for bank_name, config in BANK_CONFIG.items():
             print(f"Scraping: {bank_name}")
             welcome_rate = ""
-            standard_rate = ""
             try:
                 page.goto(config["url"], wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
                 
@@ -271,16 +265,13 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
                 rates = custom_fn(page)
                 # Convert float rates to strings for storage consistency
                 welcome_rate = str(rates.get("welcome_rate", 0.0))
-                standard_rate = str(rates.get("standard_rate", 0.0))
 
                 print(f"  Welcome Rate : {welcome_rate or '(not found)'}")
-                print(f"  Standard Rate: {standard_rate or '(not found)'}")
             except Exception as exc:
                 print(f"  [ERROR] Failed to load page for {bank_name}: {exc}")
 
             results[bank_name] = {
                 "welcome_rate": welcome_rate,
-                "standard_rate": standard_rate,
             }
 
         browser.close()
@@ -296,8 +287,8 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, str]]:
     """
     Load the last row from *excel_file* and return the same nested dict
     structure as :func:`scrape_all_banks`.  The Excel file is expected to have
-    a "Date" index column and two columns per bank:
-      "<Bank Name> Welcome Rate" and "<Bank Name> Standard Rate".
+    a "Date" index column and one column per bank:
+      "<Bank Name> Welcome Rate".
 
     Returns an empty dict if the file does not exist or is empty.
     """
@@ -318,12 +309,9 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, str]]:
 
     for bank_name in BANK_CONFIG:
         w_col = f"{bank_name} Welcome Rate"
-        s_col = f"{bank_name} Standard Rate"
         w_val = last.get(w_col)
-        s_val = last.get(s_col)
         previous[bank_name] = {
             "welcome_rate": str(w_val) if pd.notna(w_val) else "",
-            "standard_rate": str(s_val) if pd.notna(s_val) else "",
         }
 
     return previous
@@ -338,7 +326,6 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, s
     row: dict[str, str] = {}
     for bank_name, rates in scraped.items():
         row[f"{bank_name} Welcome Rate"] = rates["welcome_rate"]
-        row[f"{bank_name} Standard Rate"] = rates["standard_rate"]
 
     new_df = pd.DataFrame([row], index=[pd.Timestamp(today)])
     new_df.index.name = "Date"
@@ -371,7 +358,7 @@ def find_changes(
     Returns a list of change dicts:
       {
         "bank":      str,
-        "rate_type": "Welcome Rate" | "Standard Rate",
+        "rate_type": "Welcome Rate",
         "old":       str,
         "new":       str,
       }
@@ -386,18 +373,17 @@ def find_changes(
     changes: list[dict] = []
     for bank_name, rates in current.items():
         prev = previous.get(bank_name, {})
-        for rate_type, key in (("Welcome Rate", "welcome_rate"), ("Standard Rate", "standard_rate")):
-            old_val = prev.get(key, "")
-            new_val = rates.get(key, "")
-            # Only flag a change when we actually scraped a new (non-empty)
-            # value that differs from what was stored.
-            if new_val and new_val != old_val:
-                changes.append({
-                    "bank": bank_name,
-                    "rate_type": rate_type,
-                    "old": old_val or "(no data)",
-                    "new": new_val,
-                })
+        old_val = prev.get("welcome_rate", "")
+        new_val = rates.get("welcome_rate", "")
+        # Only flag a change when we actually scraped a new (non-empty)
+        # value that differs from what was stored.
+        if new_val and new_val != old_val:
+            changes.append({
+                "bank": bank_name,
+                "rate_type": "Welcome Rate",
+                "old": old_val or "(no data)",
+                "new": new_val,
+            })
     return changes
 
 
