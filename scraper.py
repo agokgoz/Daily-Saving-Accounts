@@ -99,21 +99,11 @@ def parse_rate_float(text: str) -> float:
 
 def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
     """
-    Extract a rate value using JavaScript evaluation.
-
-    Injects JS to find the keyword in visible elements, checks deepest nodes
-    first, and climbs up parent containers to find the percentage value.
-
-    Args:
-        page: Playwright page object
-        keyword: Text keyword to search for (e.g., "Hoş Geldin", "Serbest Plus")
-        bank_name: Name of the bank for debug logging
-
-    Returns:
-        The extracted rate as a float, or 0.0 if extraction fails.
+    Extract a rate value using advanced JavaScript evaluation.
+    Filters for visible elements, searches deepest nodes first, and climbs DOM.
     """
     try:
-        page.wait_for_timeout(2000)  # Give client-side frameworks a moment
+        page.wait_for_timeout(2000) # Give client-side frameworks a moment
         js_code = f"""
         () => {{
             const elements = Array.from(document.querySelectorAll('*'));
@@ -132,7 +122,7 @@ def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
                 let current = target;
                 let matches = null;
                 
-                // Check the target itself and climb up to 6 parent levels
+                // Check the target itself and climb up to 7 parent levels
                 for (let i = 0; i < 7; i++) {{
                     if (!current || current.tagName === 'BODY') break;
                     
@@ -162,46 +152,45 @@ def extract_rate_via_js(page, keyword: str, bank_name: str) -> float:
 
 
 def get_ing_rates(page) -> dict[str, float]:
-    """
-    Extract ING Turuncu Hesap welcome rate using JavaScript evaluation.
-
-    Returns:
-        {"welcome_rate": float}
-    """
     return {
         "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "ING"),
     }
 
 
 def get_akbank_rates(page) -> dict[str, float]:
-    """
-    Extract Akbank Serbest Hesap welcome rate using JavaScript evaluation.
-
-    Returns:
-        {"welcome_rate": float}
-    """
-    return {
-        "welcome_rate": extract_rate_via_js(page, "Serbest Plus Hesap ile", "Akbank"),
-    }
-
+    try:
+        # Wait for the table that contains the 10.000 tier to load
+        page.wait_for_selector("table:has-text('10.000')", timeout=10000)
+        
+        # Grab the text of the ENTIRE table, not just one row
+        table = page.locator("table:has-text('10.000')").first
+        table_text = table.inner_text()
+        
+        print(f"    [DEBUG] Akbank table text: '{table_text.replace(chr(10), ' ')}'")
+        
+        # Extract every valid percentage from the table
+        matches = re.findall(r'%\s?\d+[.,]?\d*|\d+[.,]?\d*\s?%', table_text)
+        
+        if matches:
+            # Strip the % signs and convert all matches to float
+            numbers = [float(m.replace('%', '').replace(',', '.').strip()) for m in matches]
+            
+            # The 10.000 TL tier is the first column, so we want the FIRST percentage found
+            return {"welcome_rate": numbers[0]}
+            
+    except Exception as exc:
+        print(f"  [WARN] Table extraction failed for Akbank: {exc}")
+        
+    return {"welcome_rate": 0.0}
 
 def get_qnb_rates(page) -> dict[str, float]:
-    """
-    Extract QNB Kazandıran Günlük Hesap welcome rate using JavaScript evaluation.
-
-    The QNB page renders rates client-side via JavaScript. This function uses
-    DOM-based JS evaluation to extract the rates directly from the rendered page.
-
-    Returns:
-        {"welcome_rate": float}
-    """
     try:
         # Force Playwright to wait for the dynamic content container
         page.wait_for_selector('.table-wrap, .template-InterestRates, li:has-text("tanışma faizi")', timeout=10000)
         page.wait_for_timeout(2000)
     except Exception:
-        pass  # Proceed anyway if timeout occurs
-
+        pass # Proceed anyway if timeout occurs
+        
     return {
         "welcome_rate": extract_rate_via_js(page, "Tanışma", "QNB"),
     }
