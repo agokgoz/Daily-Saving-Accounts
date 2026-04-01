@@ -218,13 +218,20 @@ def get_teb_rates(page) -> dict[str, float]:
 
 def get_enpara_rates(page) -> dict[str, float]:
     return {
-        "welcome_rate": extract_rate_via_js(page, "Birikim Hesabı", "Enpara"),
+        "welcome_rate": extract_rate_via_js(page, "Ayın Enparalısı", "Enpara"),
     }
 
 
 def get_vakifbank_rates(page) -> dict[str, float]:
+    try:
+        # Wait until the dynamic calculator removes the default "%0"
+        page.wait_for_function('document.querySelector(".percent") && !document.querySelector(".percent").innerText.includes("%0")', timeout=10000)
+        page.wait_for_timeout(1000)
+    except Exception:
+        pass # Proceed anyway if timeout occurs
+        
     return {
-        "welcome_rate": extract_rate_via_js(page, "Tanışma", "VakıfBank"),
+        "welcome_rate": extract_rate_via_js(page, "Faiz Oranı", "VakıfBank"),
     }
 
 
@@ -266,7 +273,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
             print(f"Scraping: {bank_name}")
             welcome_rate = ""
             try:
-                page.goto(config["url"], wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
+                page.goto(config["url"], wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
                 
                 # Wait for observation (to see Cloudflare checks, cookie banners, etc.)
                 page.wait_for_timeout(3000)
