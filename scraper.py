@@ -217,17 +217,45 @@ def get_teb_rates(page) -> dict[str, float]:
 
 
 def get_enpara_rates(page) -> dict[str, float]:
+    """
+    Scrape Enpara accumulation deposit rates from the visible table.
+    Returns the highest Ayın Enparalısı rate from the accumulation-deposit table.
+    """
     try:
-        # Wait for the specific word to render on the page
-        page.wait_for_selector('text="Enparalısı"', timeout=10000)
-        page.wait_for_timeout(1000) # Quick buffer
-    except Exception:
-        pass
-        
-    return {
-        # Using a single word prevents HTML line-break (<br>) separation issues
-        "welcome_rate": extract_rate_via_js(page, "Enparalısı", "Enpara"),
-    }
+        # Wait for the Enpara accumulation table to appear
+        table_selector = ".enpara-deposit-interest-rates__flex-table.accumulation-deposit"
+        page.wait_for_selector(table_selector, timeout=10000)
+
+        # Read all rate cells
+        rate_cells = page.locator(".accumulation-interest-value").all()
+        rate_texts = [cell.inner_text() for cell in rate_cells]
+        print(f"    [DEBUG] Enpara all rate texts: {rate_texts}")
+
+        # Take only the Ayın Enparalısı column (odd indexes: 1, 3, 5, ...)
+        enparali_texts = rate_texts[1::2]
+        print(f"    [DEBUG] Enpara Ayın Enparalısı texts: {enparali_texts}")
+
+        # Convert Turkish percentages like %40,50 to float 40.5
+        numbers = []
+        for text in enparali_texts:
+            # Remove % sign and whitespace, replace comma with dot
+            cleaned = text.replace("%", "").replace(",", ".").strip()
+            if cleaned:
+                numbers.append(float(cleaned))
+
+        print(f"    [DEBUG] Enpara parsed numbers: {numbers}")
+
+        if numbers:
+            max_rate = max(numbers)
+            print(f"    [DEBUG] Enpara max Ayın Enparalısı rate: {max_rate}")
+            return {"welcome_rate": max_rate}
+
+        print("    [DEBUG] Enpara: No valid numbers found")
+        return {"welcome_rate": 0.0}
+
+    except Exception as e:
+        print(f"    [DEBUG] Enpara scraping failed: {e}")
+        return {"welcome_rate": 0.0}
 
 
 def get_vakifbank_rates(page) -> dict[str, float]:
