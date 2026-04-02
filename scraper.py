@@ -218,52 +218,56 @@ def get_teb_rates(page) -> dict[str, float]:
 
 def get_enpara_rates(page) -> dict[str, float]:
     """
-    Scrape Enpara accumulation deposit rates from the table.
-    Returns the highest Ayın Enparalısı rate from the accumulation-deposit table.
+    Intercepts GetDailyInterestRates XHR calls (one per tier).
+    "Evet" = Ayın Enparalısı rate. Returns the highest across all tiers.
     """
-    try:
-        # Wait for the Enpara accumulation table to be attached (not visible)
-        table_selector = ".enpara-deposit-interest-rates__flex-table.accumulation-deposit"
-        page.wait_for_selector(table_selector, state="attached", timeout=15000)
+    evet_values = []
 
-        # Scope all lookups to the table only
-        table = page.locator(table_selector)
+    def handle_response(response):
+        if "GetDailyInterestRates" not in response.url:
+            return
+        if response.status != 200:
+            return
+        try:
+            data = response.json()
+            if not data.get("IsSucceded"):
+                return
+            for item in data.get("TransactionResult", []):
+                if item.get("Key") == "Evet":
+                    evet_values.append(float(item["Value"]))
+        except Exception as e:
+            print(f"    [DEBUG] Enpara XHR parse error: {e}")
 
-        # Read all rate cells within the table
-        rate_cells = table.locator(".accumulation-interest-value").all()
-        rate_texts = [cell.inner_text() for cell in rate_cells]
-        print(f"    [DEBUG] Enpara all rate texts: {rate_texts}")
+    page.on("response", handle_response)
 
-        # Take only the Ayın Enparalısı column (odd indexes: 1, 3, 5, ...)
-        # Table structure: cells alternate as [standard, Ayın Enparalısı, standard, Ayın Enparalısı, ...]
-        enparali_texts = rate_texts[1::2]
-        print(f"    [DEBUG] Enpara Ayın Enparalısı texts: {enparali_texts}")
+    # Land on homepage first to avoid bot detection on direct URL
+    page.goto("https://www.enpara.com", wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+    page.wait_for_timeout(2000)
 
-        # Convert Turkish percentages like %40,50 to float 40.5
-        numbers = []
-        for text in enparali_texts:
-            try:
-                # Remove % sign and whitespace, replace comma with dot
-                cleaned = text.replace("%", "").replace(",", ".").strip()
-                if cleaned:
-                    numbers.append(float(cleaned))
-            except ValueError:
-                print(f"    [DEBUG] Enpara: Could not parse '{text}' as a number, skipping")
-                continue
+    page.goto(
+        "https://www.enpara.com/hesaplar/birikim-hesabi",
+        wait_until="networkidle",
+        timeout=PAGE_TIMEOUT_MS,
+    )
+    page.wait_for_timeout(2000)
 
-        print(f"    [DEBUG] Enpara parsed numbers: {numbers}")
-
-        if numbers:
-            max_rate = max(numbers)
-            print(f"    [DEBUG] Enpara max Ayın Enparalısı rate: {max_rate}")
-            return {"welcome_rate": max_rate}
-
-        print("    [DEBUG] Enpara: No valid numbers found")
+    current_url = page.url
+    print(f"    [DEBUG] Enpara landed on: {current_url}")
+    if "birikim" not in current_url:
+        print("    [DEBUG] Enpara: redirected, bot detection not bypassed")
         return {"welcome_rate": 0.0}
 
-    except Exception as e:
-        print(f"    [DEBUG] Enpara scraping failed: {e}")
-        return {"welcome_rate": 0.0}
+    # Scroll to trigger all tier XHR calls
+    page.evaluate("document.getElementById('faiz-oranlari')?.scrollIntoView()")
+    page.wait_for_timeout(2000)
+
+    print(f"    [DEBUG] Enpara Evet values: {evet_values}")
+
+    if evet_values:
+        return {"welcome_rate": max(evet_values)}
+
+    print("    [DEBUG] Enpara: no Evet values captured")
+    return {"welcome_rate": 0.0}
 
 
 def get_vakifbank_rates(page) -> dict[str, float]:
