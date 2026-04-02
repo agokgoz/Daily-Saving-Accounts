@@ -218,16 +218,19 @@ def get_teb_rates(page) -> dict[str, float]:
 
 def get_enpara_rates(page) -> dict[str, float]:
     """
-    Scrape Enpara accumulation deposit rates from the visible table.
+    Scrape Enpara accumulation deposit rates from the table.
     Returns the highest Ayın Enparalısı rate from the accumulation-deposit table.
     """
     try:
-        # Wait for the Enpara accumulation table to appear
+        # Wait for the Enpara accumulation table to be attached (not visible)
         table_selector = ".enpara-deposit-interest-rates__flex-table.accumulation-deposit"
-        page.wait_for_selector(table_selector, timeout=10000)
+        page.wait_for_selector(table_selector, state="attached", timeout=15000)
 
-        # Read all rate cells
-        rate_cells = page.locator(".accumulation-interest-value").all()
+        # Scope all lookups to the table only
+        table = page.locator(table_selector)
+
+        # Read all rate cells within the table
+        rate_cells = table.locator(".accumulation-interest-value").all()
         rate_texts = [cell.inner_text() for cell in rate_cells]
         print(f"    [DEBUG] Enpara all rate texts: {rate_texts}")
 
