@@ -217,22 +217,47 @@ def get_teb_rates(page) -> dict[str, float]:
 
 
 def get_enpara_rates(page) -> dict[str, float]:
+    try:
+        # Wait for the specific word to render on the page
+        page.wait_for_selector('text="Enparalısı"', timeout=10000)
+        page.wait_for_timeout(1000) # Quick buffer
+    except Exception:
+        pass
+        
     return {
-        "welcome_rate": extract_rate_via_js(page, "Ayın Enparalısı", "Enpara"),
+        # Using a single word prevents HTML line-break (<br>) separation issues
+        "welcome_rate": extract_rate_via_js(page, "Enparalısı", "Enpara"),
     }
 
 
 def get_vakifbank_rates(page) -> dict[str, float]:
+    """
+    Bypass the dynamic calculator trap entirely and extract the maximum 
+    percentage directly from VakıfBank's static interest rate table.
+    """
     try:
-        # Wait until the dynamic calculator removes the default "%0"
-        page.wait_for_function('document.querySelector(".percent") && !document.querySelector(".percent").innerText.includes("%0")', timeout=10000)
-        page.wait_for_timeout(1000)
-    except Exception:
-        pass # Proceed anyway if timeout occurs
+        page.wait_for_selector("table", timeout=10000)
         
-    return {
-        "welcome_rate": extract_rate_via_js(page, "Faiz Oranı", "VakıfBank"),
-    }
+        # Target the table that contains the deposit terms (usually contains "Gün")
+        table = page.locator("table:has-text('Gün')").first
+        table_text = table.inner_text()
+        
+        print(f"    [DEBUG] VakıfBank table text: '{table_text.replace(chr(10), ' ')}'")
+        
+        # Strict Regex: Extract all valid percentages from the table
+        matches = re.findall(r'%\s?\d+[.,]?\d*|\d+[.,]?\d*\s?%', table_text)
+        
+        if matches:
+            # Strip the % signs and convert to float
+            numbers = [float(m.replace('%', '').replace(',', '.').strip()) for m in matches]
+            
+            # Return the highest percentage found in the table
+            return {"welcome_rate": max(numbers)}
+            
+    except Exception as exc:
+        print(f"  [WARN] Table extraction failed for VakıfBank: {exc}")
+        
+    return {"welcome_rate": 0.0}
 
 
 def scrape_all_banks() -> dict[str, dict[str, str]]:
