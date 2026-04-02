@@ -232,16 +232,21 @@ def get_enpara_rates(page) -> dict[str, float]:
         print(f"    [DEBUG] Enpara all rate texts: {rate_texts}")
 
         # Take only the Ayın Enparalısı column (odd indexes: 1, 3, 5, ...)
+        # Table structure: cells alternate as [standard, Ayın Enparalısı, standard, Ayın Enparalısı, ...]
         enparali_texts = rate_texts[1::2]
         print(f"    [DEBUG] Enpara Ayın Enparalısı texts: {enparali_texts}")
 
         # Convert Turkish percentages like %40,50 to float 40.5
         numbers = []
         for text in enparali_texts:
-            # Remove % sign and whitespace, replace comma with dot
-            cleaned = text.replace("%", "").replace(",", ".").strip()
-            if cleaned:
-                numbers.append(float(cleaned))
+            try:
+                # Remove % sign and whitespace, replace comma with dot
+                cleaned = text.replace("%", "").replace(",", ".").strip()
+                if cleaned:
+                    numbers.append(float(cleaned))
+            except ValueError:
+                print(f"    [DEBUG] Enpara: Could not parse '{text}' as a number, skipping")
+                continue
 
         print(f"    [DEBUG] Enpara parsed numbers: {numbers}")
 
