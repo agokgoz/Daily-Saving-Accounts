@@ -19,11 +19,13 @@ import os
 import re
 import smtplib
 import traceback
-from datetime import date
+from datetime import date, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ---------------------------------------------------------------------------
@@ -421,13 +423,15 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, str]]:
     return previous
 
 
-def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, str]]) -> None:
+def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, str]], scrape_time: datetime) -> None:
     """
     Append *scraped* rates for *today* to *excel_file*.
     Creates the file with the correct columns if it does not exist yet.
+    Includes the scraping time and adjusts column widths for readability.
     """
     # Build a flat row dict keyed by column names.
     row: dict[str, str] = {}
+    row["Time"] = scrape_time.strftime("%H:%M:%S")
     for bank_name, rates in scraped.items():
         row[f"{bank_name} Welcome Rate"] = rates["welcome_rate"]
 
@@ -437,6 +441,9 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, s
     if os.path.exists(excel_file):
         try:
             existing_df = pd.read_excel(excel_file, index_col=0)
+            # Ensure Time column exists in existing data
+            if "Time" not in existing_df.columns:
+                existing_df.insert(0, "Time", "")
             combined = pd.concat([existing_df, new_df])
         except Exception as exc:
             print(f"[WARN] Could not read existing file for append: {exc}. Overwriting.")
@@ -444,8 +451,47 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, s
     else:
         combined = new_df
 
+    # Ensure Time column is first
+    cols = combined.columns.tolist()
+    if "Time" in cols:
+        cols.remove("Time")
+        cols = ["Time"] + cols
+        combined = combined[cols]
+
     combined.to_excel(excel_file)
+
+    # Adjust column widths for readability
+    _adjust_column_widths(excel_file)
+
     print(f"Saved rates to {excel_file} ({len(combined)} rows total).")
+
+
+def _adjust_column_widths(excel_file: str) -> None:
+    """
+    Adjust Excel column widths based on content for better readability.
+    """
+    try:
+        wb = load_workbook(excel_file)
+        ws = wb.active
+
+        for col_idx, col in enumerate(ws.columns, 1):
+            max_length = 0
+            column_letter = get_column_letter(col_idx)
+
+            for cell in col:
+                try:
+                    cell_value = str(cell.value) if cell.value is not None else ""
+                    max_length = max(max_length, len(cell_value))
+                except Exception:
+                    pass
+
+            # Add padding and set minimum width
+            adjusted_width = max(max_length + 2, 10)
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        wb.save(excel_file)
+    except Exception as exc:
+        print(f"[WARN] Could not adjust column widths: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +629,8 @@ def send_email(changes: list[dict], today: date) -> None:
 
 def main() -> None:
     today = date.today()
-    print(f"=== Daily Savings Rate Scraper – {today} ===\n")
+    scrape_time = datetime.now()
+    print(f"=== Daily Savings Rate Scraper – {today} at {scrape_time.strftime('%H:%M:%S')} ===\n")
 
     # 1. Load yesterday's rates from the Excel ledger.
     print("Loading previous rates from Excel…")
@@ -610,7 +657,7 @@ def main() -> None:
 
     # 5. Append today's rates to the Excel ledger.
     print("\nUpdating historical ledger…")
-    append_to_excel(EXCEL_FILE, today, current_rates)
+    append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
 
     print("\nDone.")
 
