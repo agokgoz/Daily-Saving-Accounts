@@ -312,74 +312,57 @@ def get_vakifbank_rates(page) -> dict[str, float]:
 
 def get_fibabanka_rates(page) -> dict[str, float]:
     """
-    Extract Fibabanka Kiraz Hesap welcome rate using XHR interception.
-    Falls back to JS extraction if no XHR is captured.
+    Scrapes the Hoş Geldin rate from the #faiz-oranlari table.
+    Cells with headers containing 'col4' hold the welcome rate column.
+    The max across all tiers is returned (standard vs digital channels).
     """
-    captured_rates = []
-
-    def handle_response(response):
-        url_lower = response.url.lower()
-        # Look for API calls containing relevant keywords
-        keywords = ["kiraz", "faiz", "hosgeldin", "welcome", "rate", "interest"]
-        if not any(kw in url_lower for kw in keywords):
-            return
-        if response.status != 200:
-            return
-        try:
-            content_type = response.headers.get("content-type", "")
-            if "json" not in content_type.lower():
-                return
-            data = response.json()
-            # Recursively search for percentage values in the JSON
-            _extract_rates_from_json(data, captured_rates)
-        except Exception as e:
-            print(f"    [DEBUG] Fibabanka XHR parse error: {e}")
-
-    def _extract_rates_from_json(obj, rates_list):
-        """Recursively extract numeric values between 1 and 100 from JSON when associated with rate-like keys."""
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                key_lower = key.lower()
-                # Check if key suggests a rate/interest field
-                if any(kw in key_lower for kw in ["faiz", "oran", "rate", "hosgeldin", "welcome"]):
-                    if isinstance(value, (int, float)) and 1 <= value <= 100:
-                        rates_list.append(float(value))
-                # Recurse into nested structures
-                _extract_rates_from_json(value, rates_list)
-        elif isinstance(obj, list):
-            for item in obj:
-                _extract_rates_from_json(item, rates_list)
-
-    page.on("response", handle_response)
-
     try:
         page.goto(
             "https://www.fibabanka.com.tr/mevduat/kiraz-hesap",
             wait_until="networkidle",
             timeout=PAGE_TIMEOUT_MS,
         )
-        page.wait_for_timeout(3000)  # Allow dynamic content to load
+        page.wait_for_timeout(2000)
 
-        print(f"    [DEBUG] Fibabanka captured rates via XHR: {captured_rates}")
+        # Scroll to the rates section to ensure it renders
+        page.evaluate("document.getElementById('faiz-oranlari')?.scrollIntoView()")
+        page.wait_for_timeout(1500)
 
-        if captured_rates:
-            # Return the maximum rate found (likely the welcome rate)
-            return {"welcome_rate": max(captured_rates)}
+        # Wait for at least one col4 rate cell to appear in the DOM
+        # ~= is the CSS word-match selector: matches 'col4' as an exact token
+        # in the space-separated headers attribute, excluding col40, col45, etc.
+        page.wait_for_selector("#faiz-oranlari td[headers~='col4']", timeout=10000)
+
+        # Extract all welcome rate cells (col4 = Hoş Geldin columns)
+        rates = page.evaluate("""
+        () => {
+            const cells = document.querySelectorAll("#faiz-oranlari td[headers~='col4']");
+            const results = [];
+            cells.forEach(cell => {
+                const text = cell.innerText.replace('%', '').replace(',', '.').trim();
+                const num = parseFloat(text);
+                if (!isNaN(num) && num > 1 && num < 100) results.push(num);
+            });
+            return results;
+        }
+        """)
+
+        print(f"    [DEBUG] Fibabanka col4 rates: {rates}")
+        if rates:
+            return {"welcome_rate": max(rates)}
 
     except Exception as exc:
-        print(f"  [WARN] Fibabanka page load error: {exc}")
+        print(f"    [DEBUG] Fibabanka table scrape failed: {exc}")
 
-    # Fallback: Try JS extraction for "Hoş Geldin" text
-    print("    [DEBUG] Fibabanka: No XHR rates captured, falling back to JS extraction")
-    return {
-        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "Fibabanka"),
-    }
+    return {"welcome_rate": 0.0}
 
 
 def get_getirfinans_rates(page) -> dict[str, float]:
     """
-    Extract GetirFinans Hesap welcome rate from Next.js SPA.
-    Tries DOM extraction first, then falls back to __NEXT_DATA__ JSON.
+    Scrapes GetirFinans daily rate from the rate table.
+    Targets <p> tags inside cells with 'text-right font-semibold' classes.
+    The first cell is the standard rate (43%) — max would also work
+    since the high-balance tier (30%) is lower.
     """
     try:
         page.goto(
@@ -387,86 +370,34 @@ def get_getirfinans_rates(page) -> dict[str, float]:
             wait_until="networkidle",
             timeout=PAGE_TIMEOUT_MS,
         )
-        page.wait_for_timeout(3000)  # Allow hydration
+        page.wait_for_timeout(2000)
 
-        # Strategy 1: Try to extract rate directly from DOM text
-        # The page contains text like "%43 faiz oranı ile günlük hesapta kazan"
-        dom_rate = page.evaluate("""
+        # Rate cells are <p> tags inside divs with these exact Tailwind classes
+        rate = page.evaluate("""
         () => {
-            const bodyText = document.body.innerText || "";
-            
-            // Pattern 1: "%NN faiz" format (e.g., "%43 faiz")
-            let match = bodyText.match(/%\\s?(\\d+[.,]?\\d*)\\s*faiz/i);
-            if (match) return parseFloat(match[1].replace(',', '.'));
-            
-            // Pattern 2: "NN% faiz" format (e.g., "43% faiz")  
-            match = bodyText.match(/(\\d+[.,]?\\d*)\\s*%\\s*faiz/i);
-            if (match) return parseFloat(match[1].replace(',', '.'));
-            
-            // Pattern 3: General percentage patterns - find max valid rate
-            const allPercentages = bodyText.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
-            if (allPercentages) {
-                const numbers = allPercentages.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
-                const validRates = numbers.filter(n => n >= 1 && n <= 100);
-                if (validRates.length > 0) {
-                    return Math.max(...validRates);
-                }
-            }
-            return 0;
+            const cells = document.querySelectorAll('div[class*="text-right"][class*="font-semibold"] p');
+            const rates = [];
+            cells.forEach(cell => {
+                const text = cell.innerText.replace('%', '').replace(',', '.').trim();
+                const num = parseFloat(text);
+                if (!isNaN(num) && num > 1 && num < 100) rates.push(num);
+            });
+            // Return the highest rate that is NOT the anomalous low-balance tier
+            // (the 30% tier applies only to >5.4M TL balances — not the welcome rate)
+            // Standard welcome rate (43%) appears in the majority of tiers
+            const filtered = rates.filter(r => r > 35);
+            return filtered.length > 0 ? Math.max(...filtered) : 0;
         }
         """)
 
-        if dom_rate and dom_rate > 0:
-            print(f"    [DEBUG] GetirFinans DOM extraction: {dom_rate}")
-            return {"welcome_rate": float(dom_rate)}
-
-        # Strategy 2: Try to extract from __NEXT_DATA__ JSON blob
-        next_data_rate = page.evaluate("""
-        () => {
-            const nextDataScript = document.querySelector('script#__NEXT_DATA__');
-            if (!nextDataScript) return 0;
-            
-            try {
-                const data = JSON.parse(nextDataScript.textContent);
-                const jsonStr = JSON.stringify(data);
-                
-                // Pattern 1: JSON key-value pairs with rate keywords
-                // Matches: "faiz": 43 or "rate": 43.5
-                const keyValuePattern = /"(?:faiz|rate|oran|interest)"\\s*:\\s*(\\d+[.,]?\\d*)/gi;
-                let match;
-                while ((match = keyValuePattern.exec(jsonStr)) !== null) {
-                    const num = parseFloat(match[1].replace(',', '.'));
-                    if (num >= 1 && num <= 100) return num;
-                }
-                
-                // Pattern 2: Percentage strings in JSON
-                // Matches: "43%" or "%43"
-                const percentagePattern = /"(\\d+[.,]?\\d*)\\s*%"|"%\\s*(\\d+[.,]?\\d*)"/g;
-                while ((match = percentagePattern.exec(jsonStr)) !== null) {
-                    const numStr = match[1] || match[2];
-                    const num = parseFloat(numStr.replace(',', '.'));
-                    if (num >= 1 && num <= 100) return num;
-                }
-                
-            } catch (e) {
-                console.error('Error parsing __NEXT_DATA__:', e);
-            }
-            return 0;
-        }
-        """)
-
-        if next_data_rate and next_data_rate > 0:
-            print(f"    [DEBUG] GetirFinans __NEXT_DATA__ extraction: {next_data_rate}")
-            return {"welcome_rate": float(next_data_rate)}
+        print(f"    [DEBUG] GetirFinans rate from table: {rate}")
+        if rate:
+            return {"welcome_rate": float(rate)}
 
     except Exception as exc:
-        print(f"  [WARN] GetirFinans page load error: {exc}")
+        print(f"    [DEBUG] GetirFinans table scrape failed: {exc}")
 
-    # Final fallback: Generic JS extraction
-    print("    [DEBUG] GetirFinans: Falling back to generic JS extraction")
-    return {
-        "welcome_rate": extract_rate_via_js(page, "faiz", "GetirFinans"),
-    }
+    return {"welcome_rate": 0.0}
 
 
 def scrape_all_banks() -> dict[str, dict[str, str]]:
