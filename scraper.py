@@ -645,13 +645,18 @@ def find_changes(
 
 def build_html_email(changes: list[dict], today: date) -> str:
     """
-    Build an HTML email body that lists all rate changes.
+    Build an HTML email body that lists all rate changes with source URLs.
     """
     rows_html = ""
     for change in changes:
+        source_url = BANK_CONFIG.get(change["bank"], {}).get("url", "")
+        source_link = (
+            f'<br><a href="{source_url}" style="font-size:11px;color:#3498db;">{source_url}</a>'
+            if source_url else ""
+        )
         rows_html += (
             f"<tr>"
-            f"<td style='padding:8px;border:1px solid #ddd;'>{change['bank']}</td>"
+            f"<td style='padding:8px;border:1px solid #ddd;'>{change['bank']}{source_link}</td>"
             f"<td style='padding:8px;border:1px solid #ddd;'>{change['rate_type']}</td>"
             f"<td style='padding:8px;border:1px solid #ddd;color:#e74c3c;'>{change['old']}</td>"
             f"<td style='padding:8px;border:1px solid #ddd;color:#27ae60;'>{change['new']}</td>"
@@ -681,6 +686,7 @@ def build_html_email(changes: list[dict], today: date) -> str:
         </tbody>
       </table>
       <p style="font-family:Arial,sans-serif;color:#7f8c8d;font-size:12px;">
+        The full historical rates ledger is attached.<br>
         This email was sent automatically by the Daily Savings Rate Scraper.
       </p>
     </body>
@@ -691,7 +697,7 @@ def build_html_email(changes: list[dict], today: date) -> str:
 
 def send_email(changes: list[dict], today: date) -> None:
     """
-    Send an HTML notification email listing *changes*.
+    Send an HTML notification email listing changes, with the Excel ledger attached.
 
     Reads SMTP credentials from environment variables:
       SMTP_EMAIL    – Gmail sender address
@@ -709,11 +715,34 @@ def send_email(changes: list[dict], today: date) -> None:
     subject = f"[Rate Alert] Daily Savings Rate Changes – {today.strftime('%d %B %Y')}"
     html_body = build_html_email(changes, today)
 
-    msg = MIMEMultipart("alternative")
+    # Outer container must be 'mixed' to support both HTML body and attachment
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = smtp_email
     msg["To"] = target_email
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    # Wrap the HTML part in a 'related' container (best practice for HTML emails)
+    html_part = MIMEMultipart("alternative")
+    html_part.attach(MIMEText(html_body, "html", "utf-8"))
+    msg.attach(html_part)
+
+    # Attach the Excel file if it exists
+    if os.path.exists(EXCEL_FILE):
+        from email.mime.base import MIMEBase
+        from email import encoders
+        with open(EXCEL_FILE, "rb") as f:
+            attachment = MIMEBase("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            attachment.set_payload(f.read())
+            encoders.encode_base64(attachment)
+            attachment.add_header(
+                "Content-Disposition",
+                "attachment",
+                filename=f"historical_rates_{today.strftime('%Y%m%d')}.xlsx",
+            )
+            msg.attach(attachment)
+        print(f"  [DEBUG] Excel file attached: {EXCEL_FILE}")
+    else:
+        print(f"  [WARN] Excel file not found, skipping attachment: {EXCEL_FILE}")
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
