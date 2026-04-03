@@ -424,7 +424,7 @@ def scrape_all_banks() -> dict[str, dict[str, float]]:
 
     with sync_playwright() as pw:
         # Visible browser for debugging (headless=False)
-        browser = pw.chromium.launch(headless=False)
+        browser = pw.chromium.launch(headless=True)
         context = browser.new_context(
             # Mimic a regular desktop browser to avoid bot-detection.
             user_agent=(
