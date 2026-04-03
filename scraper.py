@@ -68,6 +68,14 @@ BANK_CONFIG: dict[str, dict] = {
         "url": "https://www.vakifbank.com.tr/tr/bireysel/hesaplar/vadeli-hesaplar/ari-hesabi",
         "custom_scraper": "vakifbank",
     },
+    "Fibabanka (Kiraz Hesap)": {
+        "url": "https://www.fibabanka.com.tr/mevduat/kiraz-hesap",
+        "custom_scraper": "fibabanka",
+    },
+    "GetirFinans (Hesap)": {
+        "url": "https://www.getirfinans.com/hesap/",
+        "custom_scraper": "getirfinans",
+    },
 }
 
 # Path of the Excel file that stores historical rates.
@@ -302,6 +310,179 @@ def get_vakifbank_rates(page) -> dict[str, float]:
     return {"welcome_rate": 0.0}
 
 
+def get_fibabanka_rates(page) -> dict[str, float]:
+    """
+    Extract Fibabanka Kiraz Hesap welcome rate using XHR interception.
+    Falls back to JS extraction if no XHR is captured.
+    """
+    captured_rates = []
+
+    def handle_response(response):
+        url_lower = response.url.lower()
+        # Look for API calls containing relevant keywords
+        keywords = ["kiraz", "faiz", "hosgeldin", "welcome", "rate", "interest"]
+        if not any(kw in url_lower for kw in keywords):
+            return
+        if response.status != 200:
+            return
+        try:
+            content_type = response.headers.get("content-type", "")
+            if "json" not in content_type.lower():
+                return
+            data = response.json()
+            # Recursively search for percentage values in the JSON
+            _extract_rates_from_json(data, captured_rates)
+        except Exception as e:
+            print(f"    [DEBUG] Fibabanka XHR parse error: {e}")
+
+    def _extract_rates_from_json(obj, rates_list):
+        """Recursively extract numeric values between 1 and 100 from JSON."""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                key_lower = key.lower()
+                # Check if key suggests a rate/interest field
+                if any(kw in key_lower for kw in ["faiz", "oran", "rate", "hosgeldin", "welcome"]):
+                    if isinstance(value, (int, float)) and 1 <= value <= 100:
+                        rates_list.append(float(value))
+                # Recurse into nested structures
+                _extract_rates_from_json(value, rates_list)
+        elif isinstance(obj, list):
+            for item in obj:
+                _extract_rates_from_json(item, rates_list)
+        elif isinstance(obj, (int, float)) and 1 <= obj <= 100:
+            # Also capture standalone numeric values in valid range
+            pass  # Only capture if associated with a rate-like key
+
+    page.on("response", handle_response)
+
+    try:
+        page.goto(
+            "https://www.fibabanka.com.tr/mevduat/kiraz-hesap",
+            wait_until="networkidle",
+            timeout=PAGE_TIMEOUT_MS,
+        )
+        page.wait_for_timeout(3000)  # Allow dynamic content to load
+
+        print(f"    [DEBUG] Fibabanka captured rates via XHR: {captured_rates}")
+
+        if captured_rates:
+            # Return the maximum rate found (likely the welcome rate)
+            return {"welcome_rate": max(captured_rates)}
+
+    except Exception as exc:
+        print(f"  [WARN] Fibabanka page load error: {exc}")
+
+    # Fallback: Try JS extraction for "Hoş Geldin" text
+    print("    [DEBUG] Fibabanka: No XHR rates captured, falling back to JS extraction")
+    return {
+        "welcome_rate": extract_rate_via_js(page, "Hoş Geldin", "Fibabanka"),
+    }
+
+
+def get_getirfinans_rates(page) -> dict[str, float]:
+    """
+    Extract GetirFinans Hesap welcome rate from Next.js SPA.
+    Tries DOM extraction first, then falls back to __NEXT_DATA__ JSON.
+    """
+    try:
+        page.goto(
+            "https://www.getirfinans.com/hesap/",
+            wait_until="networkidle",
+            timeout=PAGE_TIMEOUT_MS,
+        )
+        page.wait_for_timeout(3000)  # Allow hydration
+
+        # Strategy 1: Try to extract rate directly from DOM text
+        # The page contains text like "%43 faiz oranı ile günlük hesapta kazan"
+        dom_rate = page.evaluate("""
+        () => {
+            const bodyText = document.body.innerText || "";
+            // Look for patterns like "%43 faiz" or "43% faiz"
+            const matches = bodyText.match(/%\\s?(\\d+[.,]?\\d*)\\s*faiz|faiz\\s*oranı.*?(\\d+[.,]?\\d*)\\s*%|(\\d+[.,]?\\d*)\\s*%\\s*faiz/gi);
+            if (matches && matches.length > 0) {
+                // Extract the numeric part from the first match
+                const numMatch = matches[0].match(/(\\d+[.,]?\\d*)/);
+                if (numMatch) {
+                    return parseFloat(numMatch[1].replace(',', '.'));
+                }
+            }
+            
+            // Also try general percentage pattern near "faiz" or "günlük hesap"
+            const allPercentages = bodyText.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
+            if (allPercentages) {
+                const numbers = allPercentages.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
+                // Filter reasonable interest rates (1-100%)
+                const validRates = numbers.filter(n => n >= 1 && n <= 100);
+                if (validRates.length > 0) {
+                    return Math.max(...validRates);
+                }
+            }
+            return 0;
+        }
+        """)
+
+        if dom_rate and dom_rate > 0:
+            print(f"    [DEBUG] GetirFinans DOM extraction: {dom_rate}")
+            return {"welcome_rate": float(dom_rate)}
+
+        # Strategy 2: Try to extract from __NEXT_DATA__ JSON blob
+        next_data_rate = page.evaluate("""
+        () => {
+            const nextDataScript = document.querySelector('script#__NEXT_DATA__');
+            if (!nextDataScript) return 0;
+            
+            try {
+                const data = JSON.parse(nextDataScript.textContent);
+                const jsonStr = JSON.stringify(data);
+                
+                // Search for rate-like values in the JSON
+                const ratePatterns = jsonStr.match(/"(?:faiz|rate|oran|interest)"\\s*:\\s*(\\d+[.,]?\\d*)|"(\\d+[.,]?\\d*)\\s*%"/gi);
+                if (ratePatterns) {
+                    for (const pattern of ratePatterns) {
+                        const numMatch = pattern.match(/(\\d+[.,]?\\d*)/);
+                        if (numMatch) {
+                            const num = parseFloat(numMatch[1].replace(',', '.'));
+                            if (num >= 1 && num <= 100) {
+                                return num;
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback: find any number between 30-60 (typical savings rate range)
+                const allNumbers = jsonStr.match(/:\\s*(\\d{2})[,}\\]"]/g);
+                if (allNumbers) {
+                    for (const match of allNumbers) {
+                        const numMatch = match.match(/(\\d+)/);
+                        if (numMatch) {
+                            const num = parseInt(numMatch[1]);
+                            if (num >= 30 && num <= 60) {
+                                return num;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Error parsing __NEXT_DATA__:', e);
+            }
+            return 0;
+        }
+        """)
+
+        if next_data_rate and next_data_rate > 0:
+            print(f"    [DEBUG] GetirFinans __NEXT_DATA__ extraction: {next_data_rate}")
+            return {"welcome_rate": float(next_data_rate)}
+
+    except Exception as exc:
+        print(f"  [WARN] GetirFinans page load error: {exc}")
+
+    # Final fallback: Generic JS extraction
+    print("    [DEBUG] GetirFinans: Falling back to generic JS extraction")
+    return {
+        "welcome_rate": extract_rate_via_js(page, "faiz", "GetirFinans"),
+    }
+
+
 def scrape_all_banks() -> dict[str, dict[str, str]]:
     """
     Visit every bank URL with a single Playwright browser session and collect
@@ -318,6 +499,8 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
         "teb": get_teb_rates,
         "enpara": get_enpara_rates,
         "vakifbank": get_vakifbank_rates,
+        "fibabanka": get_fibabanka_rates,
+        "getirfinans": get_getirfinans_rates,
     }
 
     results: dict[str, dict[str, str]] = {}
