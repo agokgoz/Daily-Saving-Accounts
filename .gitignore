@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Debug screenshots
+error_*.png
+
+# Environment and secrets
+.env
+.env.*
+
+# Excel historical data (generated)
+!historical_rates.xlsx

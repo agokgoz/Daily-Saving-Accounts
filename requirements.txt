@@ -1,0 +1,6 @@
+# Core scraping
+playwright>=1.44.0
+
+# Data manipulation and Excel I/O
+pandas>=2.2.0
+openpyxl>=3.1.0
