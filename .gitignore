@@ -10,4 +10,4 @@ error_*.png
 .env.*
 
 # Excel historical data (generated)
-historical_rates.xlsx
+!historical_rates.xlsx
