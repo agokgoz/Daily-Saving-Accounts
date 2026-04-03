@@ -19,7 +19,7 @@ import os
 import re
 import smtplib
 import traceback
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -571,6 +571,7 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, f
 def _adjust_column_widths(excel_file: str) -> None:
     """
     Adjust Excel column widths based on content for better readability.
+    Also formats the Date index column to display dates without time.
     """
     try:
         wb = load_workbook(excel_file)
@@ -590,6 +591,12 @@ def _adjust_column_widths(excel_file: str) -> None:
             # Add padding and set minimum width
             adjusted_width = max(max_length + 2, 10)
             ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Apply date format (YYYY-MM-DD) to the Date index column (column A, rows 2+)
+        for row_idx in range(2, ws.max_row + 1):
+            cell = ws.cell(row=row_idx, column=1)
+            if cell.value is not None:
+                cell.number_format = 'YYYY-MM-DD'
 
         wb.save(excel_file)
     except Exception as exc:
@@ -790,8 +797,10 @@ def send_email(changes: list[dict], today: date) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    today = date.today()
-    scrape_time = datetime.now()
+    # Use UTC+3 timezone for Turkey
+    tz_utc3 = timezone(timedelta(hours=3))
+    today = datetime.now(tz_utc3).date()
+    scrape_time = datetime.now(tz_utc3)
     print(f"=== Daily Savings Rate Scraper – {today} at {scrape_time.strftime('%H:%M:%S')} ===\n")
 
     # 1. Load yesterday's rates from the Excel ledger.
