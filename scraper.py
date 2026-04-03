@@ -400,13 +400,13 @@ def get_getirfinans_rates(page) -> dict[str, float]:
     return {"welcome_rate": 0.0}
 
 
-def scrape_all_banks() -> dict[str, dict[str, str]]:
+def scrape_all_banks() -> dict[str, dict[str, float]]:
     """
     Visit every bank URL with a single Playwright browser session and collect
     the Welcome Rate for each bank.
 
     Returns a nested dict:
-      { bank_name: { "welcome_rate": "..." } }
+      { bank_name: { "welcome_rate": float } }
     """
     # Map of custom scraper identifiers to functions
     CUSTOM_SCRAPERS = {
@@ -438,7 +438,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
 
         for bank_name, config in BANK_CONFIG.items():
             print(f"Scraping: {bank_name}")
-            welcome_rate = ""
+            welcome_rate = 0.0
             try:
                 page.goto(config["url"], wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
                 
@@ -469,10 +469,10 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
                 custom_scraper_id = config["custom_scraper"]
                 custom_fn = CUSTOM_SCRAPERS[custom_scraper_id]
                 rates = custom_fn(page)
-                # Convert float rates to strings for storage consistency
-                welcome_rate = str(rates.get("welcome_rate", 0.0))
+                # Keep rates as floats for proper Excel number formatting
+                welcome_rate = float(rates.get("welcome_rate", 0.0))
 
-                print(f"  Welcome Rate : {welcome_rate or '(not found)'}")
+                print(f"  Welcome Rate : {welcome_rate if welcome_rate else '(not found)'}")
             except Exception as exc:
                 print(f"  [ERROR] Failed to load page for {bank_name}: {exc}")
 
@@ -489,7 +489,7 @@ def scrape_all_banks() -> dict[str, dict[str, str]]:
 # Excel / Pandas helpers
 # ---------------------------------------------------------------------------
 
-def load_last_row(excel_file: str) -> dict[str, dict[str, str]]:
+def load_last_row(excel_file: str) -> dict[str, dict[str, float]]:
     """
     Load the last row from *excel_file* and return the same nested dict
     structure as :func:`scrape_all_banks`.  The Excel file is expected to have
@@ -511,28 +511,30 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, str]]:
         return {}
 
     last = df.iloc[-1]
-    previous: dict[str, dict[str, str]] = {}
+    previous: dict[str, dict[str, float]] = {}
 
     for bank_name in BANK_CONFIG:
         w_col = f"{bank_name} Welcome Rate"
         w_val = last.get(w_col)
         previous[bank_name] = {
-            "welcome_rate": str(w_val) if pd.notna(w_val) else "",
+            "welcome_rate": float(w_val) if pd.notna(w_val) else 0.0,
         }
 
     return previous
 
 
-def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, str]], scrape_time: datetime) -> None:
+def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, float]], scrape_time: datetime) -> None:
     """
     Append *scraped* rates for *today* to *excel_file*.
     Creates the file with the correct columns if it does not exist yet.
     Includes the scraping time and adjusts column widths for readability.
     """
     # Build a flat row dict keyed by column names.
-    row: dict[str, str] = {}
+    # Use Union type to allow both string (Time) and float (rates) values
+    row: dict[str, str | float] = {}
     row["Time"] = scrape_time.strftime("%H:%M:%S")
     for bank_name, rates in scraped.items():
+        # Rates are stored as floats for proper Excel number formatting
         row[f"{bank_name} Welcome Rate"] = rates["welcome_rate"]
 
     new_df = pd.DataFrame([row], index=[pd.Timestamp(today)])
@@ -599,8 +601,8 @@ def _adjust_column_widths(excel_file: str) -> None:
 # ---------------------------------------------------------------------------
 
 def find_changes(
-    previous: dict[str, dict[str, str]],
-    current: dict[str, dict[str, str]],
+    previous: dict[str, dict[str, float]],
+    current: dict[str, dict[str, float]],
 ) -> list[dict]:
     """
     Compare *current* rates against *previous* rates.
@@ -609,11 +611,11 @@ def find_changes(
       {
         "bank":      str,
         "rate_type": "Welcome Rate",
-        "old":       str,
-        "new":       str,
+        "old":       float,
+        "new":       float,
       }
 
-    Only non-empty new values that differ from the previous value are reported.
+    Only non-zero new values that differ from the previous value are reported.
     If there is no previous data (first run) no changes are reported.
     """
     if not previous:
@@ -623,15 +625,15 @@ def find_changes(
     changes: list[dict] = []
     for bank_name, rates in current.items():
         prev = previous.get(bank_name, {})
-        old_val = prev.get("welcome_rate", "")
-        new_val = rates.get("welcome_rate", "")
-        # Only flag a change when we actually scraped a new (non-empty)
+        old_val = prev.get("welcome_rate", 0.0)
+        new_val = rates.get("welcome_rate", 0.0)
+        # Only flag a change when we actually scraped a new (non-zero)
         # value that differs from what was stored.
         if new_val and new_val != old_val:
             changes.append({
                 "bank": bank_name,
                 "rate_type": "Welcome Rate",
-                "old": old_val or "(no data)",
+                "old": old_val if old_val else "(no data)",
                 "new": new_val,
             })
     return changes
