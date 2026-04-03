@@ -1,0 +1,51 @@
+name: Daily Savings Rate Scraper
+
+on:
+  schedule:
+    # Run every day at 05:00 UTC.
+    - cron: "1 0 * * *"
+  # Allow manual runs from the Actions tab.
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Needed to push the updated Excel file back to the repository.
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run scraper
+        env:
+          SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
+        run: python scraper.py
+
+      - name: Commit and push updated Excel ledger
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add historical_rates.xlsx
+          # Only commit and push if the file actually changed.
+          if git diff --cached --quiet; then
+            echo "No changes to historical_rates.xlsx – nothing to commit."
+          else
+            git commit -m "chore: update historical_rates.xlsx [skip ci]"
+            git push
+          fi
