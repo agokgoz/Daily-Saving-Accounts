@@ -336,7 +336,7 @@ def get_fibabanka_rates(page) -> dict[str, float]:
             print(f"    [DEBUG] Fibabanka XHR parse error: {e}")
 
     def _extract_rates_from_json(obj, rates_list):
-        """Recursively extract numeric values between 1 and 100 from JSON."""
+        """Recursively extract numeric values between 1 and 100 from JSON when associated with rate-like keys."""
         if isinstance(obj, dict):
             for key, value in obj.items():
                 key_lower = key.lower()
@@ -349,9 +349,6 @@ def get_fibabanka_rates(page) -> dict[str, float]:
         elif isinstance(obj, list):
             for item in obj:
                 _extract_rates_from_json(item, rates_list)
-        elif isinstance(obj, (int, float)) and 1 <= obj <= 100:
-            # Also capture standalone numeric values in valid range
-            pass  # Only capture if associated with a rate-like key
 
     page.on("response", handle_response)
 
@@ -397,21 +394,19 @@ def get_getirfinans_rates(page) -> dict[str, float]:
         dom_rate = page.evaluate("""
         () => {
             const bodyText = document.body.innerText || "";
-            // Look for patterns like "%43 faiz" or "43% faiz"
-            const matches = bodyText.match(/%\\s?(\\d+[.,]?\\d*)\\s*faiz|faiz\\s*oranı.*?(\\d+[.,]?\\d*)\\s*%|(\\d+[.,]?\\d*)\\s*%\\s*faiz/gi);
-            if (matches && matches.length > 0) {
-                // Extract the numeric part from the first match
-                const numMatch = matches[0].match(/(\\d+[.,]?\\d*)/);
-                if (numMatch) {
-                    return parseFloat(numMatch[1].replace(',', '.'));
-                }
-            }
             
-            // Also try general percentage pattern near "faiz" or "günlük hesap"
+            // Pattern 1: "%NN faiz" format (e.g., "%43 faiz")
+            let match = bodyText.match(/%\\s?(\\d+[.,]?\\d*)\\s*faiz/i);
+            if (match) return parseFloat(match[1].replace(',', '.'));
+            
+            // Pattern 2: "NN% faiz" format (e.g., "43% faiz")  
+            match = bodyText.match(/(\\d+[.,]?\\d*)\\s*%\\s*faiz/i);
+            if (match) return parseFloat(match[1].replace(',', '.'));
+            
+            // Pattern 3: General percentage patterns - find max valid rate
             const allPercentages = bodyText.match(/%\\s?\\d+[.,]?\\d*|\\d+[.,]?\\d*\\s?%/g);
             if (allPercentages) {
                 const numbers = allPercentages.map(m => parseFloat(m.replace('%', '').replace(',', '.').trim()));
-                // Filter reasonable interest rates (1-100%)
                 const validRates = numbers.filter(n => n >= 1 && n <= 100);
                 if (validRates.length > 0) {
                     return Math.max(...validRates);
@@ -435,33 +430,24 @@ def get_getirfinans_rates(page) -> dict[str, float]:
                 const data = JSON.parse(nextDataScript.textContent);
                 const jsonStr = JSON.stringify(data);
                 
-                // Search for rate-like values in the JSON
-                const ratePatterns = jsonStr.match(/"(?:faiz|rate|oran|interest)"\\s*:\\s*(\\d+[.,]?\\d*)|"(\\d+[.,]?\\d*)\\s*%"/gi);
-                if (ratePatterns) {
-                    for (const pattern of ratePatterns) {
-                        const numMatch = pattern.match(/(\\d+[.,]?\\d*)/);
-                        if (numMatch) {
-                            const num = parseFloat(numMatch[1].replace(',', '.'));
-                            if (num >= 1 && num <= 100) {
-                                return num;
-                            }
-                        }
-                    }
+                // Pattern 1: JSON key-value pairs with rate keywords
+                // Matches: "faiz": 43 or "rate": 43.5
+                const keyValuePattern = /"(?:faiz|rate|oran|interest)"\\s*:\\s*(\\d+[.,]?\\d*)/gi;
+                let match;
+                while ((match = keyValuePattern.exec(jsonStr)) !== null) {
+                    const num = parseFloat(match[1].replace(',', '.'));
+                    if (num >= 1 && num <= 100) return num;
                 }
                 
-                // Fallback: find any number between 30-60 (typical savings rate range)
-                const allNumbers = jsonStr.match(/:\\s*(\\d{2})[,}\\]"]/g);
-                if (allNumbers) {
-                    for (const match of allNumbers) {
-                        const numMatch = match.match(/(\\d+)/);
-                        if (numMatch) {
-                            const num = parseInt(numMatch[1]);
-                            if (num >= 30 && num <= 60) {
-                                return num;
-                            }
-                        }
-                    }
+                // Pattern 2: Percentage strings in JSON
+                // Matches: "43%" or "%43"
+                const percentagePattern = /"(\\d+[.,]?\\d*)\\s*%"|"%\\s*(\\d+[.,]?\\d*)"/g;
+                while ((match = percentagePattern.exec(jsonStr)) !== null) {
+                    const numStr = match[1] || match[2];
+                    const num = parseFloat(numStr.replace(',', '.'));
+                    if (num >= 1 && num <= 100) return num;
                 }
+                
             } catch (e) {
                 console.error('Error parsing __NEXT_DATA__:', e);
             }
