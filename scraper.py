@@ -646,7 +646,32 @@ def find_changes(
 def build_html_email(changes: list[dict], today: date) -> str:
     """
     Build an HTML email body that lists all rate changes with source URLs.
+    If no changes, returns a "no changes detected" message.
     """
+    if not changes:
+        # No changes detected – send a simple notification
+        html = f"""
+        <html>
+        <body>
+          <h2 style="font-family:Arial,sans-serif;">
+            📊 Daily Savings Rate Report – {today.strftime('%d %B %Y')}
+          </h2>
+          <p style="font-family:Arial,sans-serif;">
+            ✅ <strong>No rate changes detected today.</strong>
+          </p>
+          <p style="font-family:Arial,sans-serif;">
+            All monitored bank interest rates remain unchanged from yesterday.
+          </p>
+          <p style="font-family:Arial,sans-serif;color:#7f8c8d;font-size:12px;">
+            The full historical rates ledger is attached.<br>
+            This email was sent automatically by the Daily Savings Rate Scraper.
+          </p>
+        </body>
+        </html>
+        """
+        return html
+
+    # Build table for changes
     rows_html = ""
     for change in changes:
         source_url = BANK_CONFIG.get(change["bank"], {}).get("url", "")
@@ -697,7 +722,8 @@ def build_html_email(changes: list[dict], today: date) -> str:
 
 def send_email(changes: list[dict], today: date) -> None:
     """
-    Send an HTML notification email listing changes, with the Excel ledger attached.
+    Send an HTML notification email listing changes (or no-changes notice),
+    with the Excel ledger attached.
 
     Reads SMTP credentials from environment variables:
       SMTP_EMAIL    – Gmail sender address
@@ -712,7 +738,12 @@ def send_email(changes: list[dict], today: date) -> None:
         print("[WARN] Email credentials not set – skipping email notification.")
         return
 
-    subject = f"[Rate Alert] Daily Savings Rate Changes – {today.strftime('%d %B %Y')}"
+    # Use different subject line based on whether changes were detected
+    if changes:
+        subject = f"[Rate Alert] Daily Savings Rate Changes – {today.strftime('%d %B %Y')}"
+    else:
+        subject = f"[Rate Report] No Changes – {today.strftime('%d %B %Y')}"
+
     html_body = build_html_email(changes, today)
 
     # Outer container must be 'mixed' to support both HTML body and attachment
@@ -781,10 +812,9 @@ def main() -> None:
     else:
         print("  No rate changes detected.")
 
-    # 4. Send email if there are changes.
-    if changes:
-        print("\nSending email notification…")
-        send_email(changes, today)
+    # 4. Send email (always – with changes or "no changes" notice).
+    print("\nSending email notification…")
+    send_email(changes, today)
 
     # 5. Append today's rates to the Excel ledger.
     print("\nUpdating historical ledger…")
