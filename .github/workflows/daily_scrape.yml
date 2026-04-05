@@ -2,10 +2,13 @@ name: Daily Savings Rate Scraper
 
 on:
   schedule:
-    # Run every day at 05:05 UTC.
+    # Primary run at 05:05 UTC daily.
     # Avoid minute 0 – GitHub Actions queues are heavily loaded at the top
     # of every hour, which can cause scheduled runs to be delayed or skipped.
     - cron: "5 5 * * *"
+    # Fallback run at 09:05 UTC daily, in case the primary run was
+    # delayed, skipped, or failed by GitHub's scheduler.
+    - cron: "5 9 * * *"
 
   # Allow manual runs from the Actions tab.
   workflow_dispatch:
@@ -33,12 +36,51 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
 
+      - name: Check if today's rates already exist
+        id: check_today
+        run: |
+          python - << 'EOF'
+          import os, sys
+          import pandas as pd
+          from datetime import datetime, timezone, timedelta
+          tz_utc3 = timezone(timedelta(hours=3))
+          today = datetime.now(tz_utc3).date()
+          excel_file = "historical_rates.xlsx"
+          already_scraped = False
+          if os.path.exists(excel_file):
+              try:
+                  df = pd.read_excel(excel_file, index_col=0)
+                  if not df.empty:
+                      last_date = df.index[-1].date()
+                      already_scraped = (last_date == today)
+              except Exception as e:
+                  print(f"Warning: could not read {excel_file}: {e}", file=sys.stderr)
+          result = "true" if already_scraped else "false"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"already_scraped={result}\n")
+          print(f"Today's rates already in ledger: {already_scraped}")
+          EOF
+
       - name: Run scraper
+        if: steps.check_today.outputs.already_scraped != 'true'
         env:
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
-        run: python scraper.py
+        run: |
+          MAX_ATTEMPTS=3
+          RETRY_DELAY_SECONDS=300  # 5 minutes between retries
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Attempt $attempt/$MAX_ATTEMPTS…"
+            python scraper.py && break
+            if [ $attempt -lt $MAX_ATTEMPTS ]; then
+              echo "Attempt $attempt failed. Retrying in $RETRY_DELAY_SECONDS seconds…"
+              sleep $RETRY_DELAY_SECONDS
+            else
+              echo "All $MAX_ATTEMPTS attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Commit and push updated Excel ledger
         run: |
