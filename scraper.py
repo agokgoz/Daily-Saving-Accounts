@@ -22,6 +22,7 @@ import traceback
 from datetime import date, datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape as html_escape
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -657,8 +658,8 @@ def _build_source_websites_section() -> str:
     """
     sources_html = "".join(
         f'<li style="margin-bottom:4px;">'
-        f'<strong>{bank_name}:</strong> '
-        f'<a href="{url}" style="color:#3498db;">{url}</a>'
+        f'<strong>{html_escape(bank_name)}:</strong> '
+        f'<a href="{html_escape(url)}" style="color:#3498db;">{html_escape(url)}</a>'
         f'</li>'
         for bank_name, config in BANK_CONFIG.items()
         if (url := config.get("url", ""))
