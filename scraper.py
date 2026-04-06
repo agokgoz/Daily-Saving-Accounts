@@ -655,16 +655,14 @@ def _build_source_websites_section() -> str:
     Build an HTML section listing all source websites from which rate data is collected.
     This is included in emails for regulatory compliance purposes.
     """
-    sources_html = ""
-    for bank_name, config in BANK_CONFIG.items():
-        url = config.get("url", "")
-        if url:
-            sources_html += (
-                f'<li style="margin-bottom:4px;">'
-                f'<strong>{bank_name}:</strong> '
-                f'<a href="{url}" style="color:#3498db;">{url}</a>'
-                f'</li>'
-            )
+    sources_html = "".join(
+        f'<li style="margin-bottom:4px;">'
+        f'<strong>{bank_name}:</strong> '
+        f'<a href="{url}" style="color:#3498db;">{url}</a>'
+        f'</li>'
+        for bank_name, config in BANK_CONFIG.items()
+        if (url := config.get("url", ""))
+    )
     
     section = f"""
       <hr style="border:none;border-top:1px solid #ddd;margin:20px 0;">
@@ -684,8 +682,8 @@ def _build_source_websites_section() -> str:
 def build_html_email(changes: list[dict], today: date) -> str:
     """
     Build an HTML email body that lists all rate changes with source URLs.
-    If no changes, returns a "no changes detected" message.
-    Both variants include a data sources section at the bottom for regulatory compliance.
+    If no changes, returns a "no changes detected" message. Both email variants
+    include a data sources section at the bottom for regulatory compliance.
     """
     # Get the source websites section for regulatory compliance
     sources_section = _build_source_websites_section()
