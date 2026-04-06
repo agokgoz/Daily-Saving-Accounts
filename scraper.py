@@ -825,9 +825,18 @@ def main() -> None:
     print("\nSending email notification…")
     send_email(changes, today)
 
-    # 5. Append today's rates to the Excel ledger.
-    print("\nUpdating historical ledger…")
-    append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
+    # 5. Append today's rates to the Excel ledger only if:
+    #    - This is the first run (Excel file doesn't exist), OR
+    #    - Changes were detected
+    is_first_run = not os.path.exists(EXCEL_FILE)
+    if is_first_run:
+        print("\nFirst run – creating historical ledger…")
+        append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
+    elif changes:
+        print("\nUpdating historical ledger…")
+        append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
+    else:
+        print("\nNo changes detected – skipping Excel update.")
 
     print("\nDone.")
 
