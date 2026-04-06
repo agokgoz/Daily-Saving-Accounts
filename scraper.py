@@ -22,6 +22,7 @@ import traceback
 from datetime import date, datetime, timezone, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape as html_escape
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -650,11 +651,44 @@ def find_changes(
 # Email
 # ---------------------------------------------------------------------------
 
+def _build_source_websites_section() -> str:
+    """
+    Build an HTML section listing all source websites from which rate data is collected.
+    This is included in emails for regulatory compliance purposes.
+    """
+    sources_html = "".join(
+        f'<li style="margin-bottom:4px;">'
+        f'<strong>{html_escape(bank_name)}:</strong> '
+        f'<a href="{html_escape(url)}" style="color:#3498db;">{html_escape(url)}</a>'
+        f'</li>'
+        for bank_name, config in BANK_CONFIG.items()
+        if (url := config.get("url", ""))
+    )
+    
+    section = f"""
+      <hr style="border:none;border-top:1px solid #ddd;margin:20px 0;">
+      <div style="font-family:Arial,sans-serif;font-size:12px;color:#7f8c8d;">
+        <p style="margin-bottom:8px;"><strong>📋 Data Sources</strong></p>
+        <p style="margin-bottom:8px;">
+          The interest rate information in this report was gathered from the following official bank websites:
+        </p>
+        <ul style="margin:0;padding-left:20px;">
+          {sources_html}
+        </ul>
+      </div>
+    """
+    return section
+
+
 def build_html_email(changes: list[dict], today: date) -> str:
     """
     Build an HTML email body that lists all rate changes with source URLs.
-    If no changes, returns a "no changes detected" message.
+    If no changes, returns a "no changes detected" message. Both email variants
+    include a data sources section at the bottom for regulatory compliance.
     """
+    # Get the source websites section for regulatory compliance
+    sources_section = _build_source_websites_section()
+    
     if not changes:
         # No changes detected – send a simple notification
         html = f"""
@@ -673,6 +707,7 @@ def build_html_email(changes: list[dict], today: date) -> str:
             The full historical rates ledger is attached.<br>
             This email was sent automatically by the Daily Savings Rate Scraper.
           </p>
+          {sources_section}
         </body>
         </html>
         """
@@ -721,6 +756,7 @@ def build_html_email(changes: list[dict], today: date) -> str:
         The full historical rates ledger is attached.<br>
         This email was sent automatically by the Daily Savings Rate Scraper.
       </p>
+      {sources_section}
     </body>
     </html>
     """
