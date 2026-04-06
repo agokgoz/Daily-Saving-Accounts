@@ -36,33 +36,7 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
 
-      - name: Check if today's rates already exist
-        id: check_today
-        run: |
-          python - << 'EOF'
-          import os, sys
-          import pandas as pd
-          from datetime import datetime, timezone, timedelta
-          tz_utc3 = timezone(timedelta(hours=3))
-          today = datetime.now(tz_utc3).date()
-          excel_file = "historical_rates.xlsx"
-          already_scraped = False
-          if os.path.exists(excel_file):
-              try:
-                  df = pd.read_excel(excel_file, index_col=0)
-                  if not df.empty:
-                      last_date = df.index[-1].date()
-                      already_scraped = (last_date == today)
-              except Exception as e:
-                  print(f"Warning: could not read {excel_file}: {e}", file=sys.stderr)
-          result = "true" if already_scraped else "false"
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"already_scraped={result}\n")
-          print(f"Today's rates already in ledger: {already_scraped}")
-          EOF
-
       - name: Run scraper
-        if: steps.check_today.outputs.already_scraped != 'true'
         env:
           SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
