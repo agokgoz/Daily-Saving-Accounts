@@ -527,6 +527,7 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, float]]:
 def has_entry_for_date(excel_file: str, target_date: date) -> bool:
     """
     Return True if *excel_file* already contains a row for *target_date*.
+    Returns False if the file cannot be read or parsed.
     """
     if not os.path.exists(excel_file):
         return False
@@ -541,8 +542,9 @@ def has_entry_for_date(excel_file: str, target_date: date) -> bool:
         return False
 
     try:
-        normalized_index = pd.to_datetime(df.index).date
-        return target_date in normalized_index
+        parsed_index = pd.to_datetime(df.index, errors="coerce").normalize()
+        valid_dates = {ts.date() for ts in parsed_index if pd.notna(ts)}
+        return target_date in valid_dates
     except Exception as exc:
         print(f"[WARN] Could not parse dates in {excel_file}: {exc}")
         return False
@@ -569,8 +571,9 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, f
     if os.path.exists(excel_file):
         try:
             existing_df = pd.read_excel(excel_file, index_col=0)
-            existing_df.index = pd.to_datetime(existing_df.index).normalize()
-            today_ts = pd.Timestamp(today)
+            existing_df.index = pd.to_datetime(existing_df.index, errors="coerce").normalize()
+            existing_df = existing_df[existing_df.index.notna()]
+            today_ts = pd.Timestamp(today).normalize()
             # Ensure Time column exists in existing data
             if "Time" not in existing_df.columns:
                 existing_df.insert(0, "Time", "")
@@ -578,17 +581,11 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, f
             # Ensure all new columns exist in existing data
             for col in new_df.columns:
                 if col not in existing_df.columns:
-                    existing_df[col] = pd.NA
+                    existing_df[col] = float("nan")
 
-            # Ensure new row has all existing columns
-            new_df = new_df.reindex(columns=existing_df.columns)
-
-            if today_ts in existing_df.index:
-                # Overwrite today's row with latest reading
-                existing_df.loc[today_ts, :] = new_df.iloc[0]
-                combined = existing_df
-            else:
-                combined = pd.concat([existing_df, new_df])
+            # Overwrite today's row with latest reading, or create it if missing.
+            existing_df.loc[today_ts] = pd.Series(row)
+            combined = existing_df
         except Exception as exc:
             print(f"[WARN] Could not read existing file for append: {exc}. Overwriting.")
             combined = new_df
