@@ -524,10 +524,35 @@ def load_last_row(excel_file: str) -> dict[str, dict[str, float]]:
     return previous
 
 
+def has_entry_for_date(excel_file: str, target_date: date) -> bool:
+    """
+    Return True if *excel_file* already contains a row for *target_date*.
+    """
+    if not os.path.exists(excel_file):
+        return False
+
+    try:
+        df = pd.read_excel(excel_file, index_col=0)
+    except Exception as exc:
+        print(f"[WARN] Could not read {excel_file} for date check: {exc}")
+        return False
+
+    if df.empty:
+        return False
+
+    try:
+        normalized_index = pd.to_datetime(df.index).date
+        return target_date in normalized_index
+    except Exception as exc:
+        print(f"[WARN] Could not parse dates in {excel_file}: {exc}")
+        return False
+
+
 def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, float]], scrape_time: datetime) -> None:
     """
-    Append *scraped* rates for *today* to *excel_file*.
+    Upsert *scraped* rates for *today* into *excel_file*.
     Creates the file with the correct columns if it does not exist yet.
+    If a row for *today* already exists, it is overwritten with latest values.
     Includes the scraping time and adjusts column widths for readability.
     """
     # Build a flat row dict keyed by column names.
@@ -544,10 +569,26 @@ def append_to_excel(excel_file: str, today: date, scraped: dict[str, dict[str, f
     if os.path.exists(excel_file):
         try:
             existing_df = pd.read_excel(excel_file, index_col=0)
+            existing_df.index = pd.to_datetime(existing_df.index).normalize()
+            today_ts = pd.Timestamp(today)
             # Ensure Time column exists in existing data
             if "Time" not in existing_df.columns:
                 existing_df.insert(0, "Time", "")
-            combined = pd.concat([existing_df, new_df])
+
+            # Ensure all new columns exist in existing data
+            for col in new_df.columns:
+                if col not in existing_df.columns:
+                    existing_df[col] = pd.NA
+
+            # Ensure new row has all existing columns
+            new_df = new_df.reindex(columns=existing_df.columns)
+
+            if today_ts in existing_df.index:
+                # Overwrite today's row with latest reading
+                existing_df.loc[today_ts, :] = new_df.iloc[0]
+                combined = existing_df
+            else:
+                combined = pd.concat([existing_df, new_df])
         except Exception as exc:
             print(f"[WARN] Could not read existing file for append: {exc}. Overwriting.")
             combined = new_df
@@ -838,6 +879,7 @@ def main() -> None:
     today = datetime.now(tz_utc3).date()
     scrape_time = datetime.now(tz_utc3)
     print(f"=== Daily Savings Rate Scraper – {today} at {scrape_time.strftime('%H:%M:%S')} ===\n")
+    is_first_run_today = not has_entry_for_date(EXCEL_FILE, today)
 
     # 1. Load yesterday's rates from the Excel ledger.
     print("Loading previous rates from Excel…")
@@ -857,22 +899,26 @@ def main() -> None:
     else:
         print("  No rate changes detected.")
 
-    # 4. Send email (always – with changes or "no changes" notice).
-    print("\nSending email notification…")
-    send_email(changes, today)
-
-    # 5. Append today's rates to the Excel ledger only if:
-    #    - This is the first run (Excel file doesn't exist), OR
-    #    - Changes were detected
-    is_first_run = not os.path.exists(EXCEL_FILE)
-    if is_first_run:
-        print("\nFirst run – creating historical ledger…")
+    # 4. Upsert today's rates to the Excel ledger only if:
+    #    - This is the first run of today, OR
+    #    - Changes were detected in a later run
+    if is_first_run_today:
+        print("\nFirst run of today – recording daily snapshot…")
         append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
     elif changes:
-        print("\nUpdating historical ledger…")
+        print("\nChanges detected – updating today's ledger row…")
         append_to_excel(EXCEL_FILE, today, current_rates, scrape_time)
     else:
-        print("\nNo changes detected – skipping Excel update.")
+        print("\nNo changes detected on later run – skipping Excel update.")
+
+    # 5. Send email only if:
+    #    - This is the first run of today (including no-change report), OR
+    #    - Changes were detected
+    if is_first_run_today or changes:
+        print("\nSending email notification…")
+        send_email(changes, today)
+    else:
+        print("\nNo changes detected on later run – skipping email notification.")
 
     print("\nDone.")
 
