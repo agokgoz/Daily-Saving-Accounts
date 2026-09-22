@@ -809,14 +809,15 @@ def send_email(changes: list[dict], today: date) -> None:
     Reads SMTP credentials from environment variables:
       SMTP_EMAIL    – Gmail sender address
       SMTP_PASSWORD – Gmail App Password (not the account password)
-      TARGET_EMAIL  – recipient address(es), comma-separated for multiple
+      TARGET_EMAIL  – one or more recipient addresses, separated by ',' or ';'
     """
     smtp_email = os.environ.get("SMTP_EMAIL", "")
     smtp_password = os.environ.get("SMTP_PASSWORD", "")
     target_email = os.environ.get("TARGET_EMAIL", "")
-    recipient_emails = [email.strip() for email in target_email.split(",") if email.strip()]
+    # Split multiple recipients (accepts both ',' and ';' as separators)
+    recipients = [e.strip() for e in target_email.replace(";", ",").split(",") if e.strip()]
 
-    if not all([smtp_email, smtp_password, recipient_emails]):
+    if not all([smtp_email, smtp_password, recipients]):
         print("[WARN] Email credentials not set – skipping email notification.")
         return
 
@@ -832,9 +833,9 @@ def send_email(changes: list[dict], today: date) -> None:
     msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = smtp_email
-    msg["To"] = ", ".join(recipient_emails)
+    msg["To"] = ", ".join(recipients)
 
-    # Wrap the HTML part in a 'related' container (best practice for HTML emails)
+    # HTML body
     html_part = MIMEMultipart("alternative")
     html_part.attach(MIMEText(html_body, "html", "utf-8"))
     msg.attach(html_part)
@@ -860,8 +861,8 @@ def send_email(changes: list[dict], today: date) -> None:
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(smtp_email, smtp_password)
-            server.sendmail(smtp_email, recipient_emails, msg.as_string())
-        print(f"Email sent to {', '.join(recipient_emails)} with {len(changes)} change(s).")
+            server.sendmail(smtp_email, recipients, msg.as_string())
+        print(f"Email sent to {', '.join(recipients)} with {len(changes)} change(s).")
     except Exception as exc:
         print(f"[ERROR] Failed to send email: {exc}")
         traceback.print_exc()
