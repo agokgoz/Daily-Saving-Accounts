@@ -9,7 +9,7 @@ changes are detected, and appends today's rates to the Excel file.
 Environment Variables Required (for email):
   SMTP_EMAIL    – sender Gmail address
   SMTP_PASSWORD – Gmail App Password
-  TARGET_EMAIL  – recipient email address
+  TARGET_EMAIL  – recipient email address(es), comma-separated for multiple
 
 Usage:
   python scraper.py
@@ -814,7 +814,6 @@ def send_email(changes: list[dict], today: date) -> None:
     smtp_email = os.environ.get("SMTP_EMAIL", "")
     smtp_password = os.environ.get("SMTP_PASSWORD", "")
     target_email = os.environ.get("TARGET_EMAIL", "")
-
     # Split multiple recipients (accepts both ',' and ';' as separators)
     recipients = [e.strip() for e in target_email.replace(";", ",").split(",") if e.strip()]
 
